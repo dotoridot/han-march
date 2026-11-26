@@ -498,8 +498,8 @@ func camp_view(reveal_draft: bool) -> void:
 	}[next_chapter]
 	words(screen_body,"%s %s" % [threat,next.description],14,PAPER,true)
 	var routes: Array = next.routes
-	var enemy_difference = "적 적음" if routes[0][4]<routes[1][4] else "적 많음"
-	var other_difference = "적 많음" if routes[0][4]<routes[1][4] else "적 적음"
+	var enemy_difference = "적이 적음" if routes[0][4]<routes[1][4] else "적이 많음"
+	var other_difference = "적이 많음" if routes[0][4]<routes[1][4] else "적이 적음"
 	words(screen_body,"경유지 선택 전 / %s (%s), %s (%s). 지형 효과는 선택에 따라 달라집니다." % [
 		routes[0][0],enemy_difference,routes[1][0],other_difference],14,SUBTLE,true)
 	var reward_notes = {}
@@ -545,7 +545,7 @@ func camp_view(reveal_draft: bool) -> void:
 	dice_view = FeatureModel.new()
 	dice_view.seal = false
 	dice_view.reduced = motion_reduced
-	dice_view.custom_minimum_size = Vector2(155,160)
+	dice_view.custom_minimum_size = Vector2(155,120)
 	die_column.add_child(dice_view)
 	var number = game.draft_result.get_slice("면",0).to_int() if not game.draft_candidate.is_empty() else 0
 	dice_view.set_face(number,reveal_draft)
@@ -585,9 +585,9 @@ func camp_view(reveal_draft: bool) -> void:
 			var capped = level>=Campaign.PROMOTION_CAP
 			words(sheet,"%d면 / %s 중복 / 현재 승급 %d/%d" % [number,Campaign.HEROES[id][0],level,Campaign.PROMOTION_CAP],17,GOLD,true)
 			if draft_resolution=="promote":
-				words(sheet,"%s 승급 예정 / %d단계" % [Campaign.HEROES[id][0],level+1],16,PROMOTION_BLUE,true)
+				words(die_column,"%s 승급 예정\n%d단계" % [Campaign.HEROES[id][0],level+1],15,PROMOTION_BLUE,true).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			elif draft_resolution=="supply":
-				words(sheet,"보급 +%d 전환 예정" % gain,16,PAPER,true)
+				words(die_column,"보급 +%d 전환 예정" % gain,15,PAPER,true).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			if not capped:
 				words(sheet,draft_tactic_line(id,"promote","승급",current),15,PAPER,true)
 			words(sheet,draft_tactic_line(id,"supply","보급 +%d 전환" % gain,current),15,PAPER,true)

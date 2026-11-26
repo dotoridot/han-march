@@ -174,6 +174,13 @@ func order_edges() -> void:
 		confirm_with_enter()
 		await snap("orders-promotion-%d" % example[0])
 		check_reward_view(promote,"강화")
+		var pending_label: Label
+		for label in ui.dice_view.get_parent().find_children("*","Label",true,false):
+			if label.text.begins_with("조참 승급 예정"):
+				pending_label = label
+		if not is_instance_valid(pending_label) or not root.get_visible_rect().encloses(pending_label.get_global_rect()):
+			push_error("The pending promotion must stay visible when focus scrolls to the perk")
+			status = 1
 		if example[0]==9:
 			ui.choose_draft_resolution("supply")
 			await snap("orders-cap-conversion")
