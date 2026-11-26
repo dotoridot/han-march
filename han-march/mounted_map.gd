@@ -179,13 +179,15 @@ func _draw() -> void:
 
 func draw_waterways() -> void:
 	if chapter!=1:
-		var basin = map_pixel(FIELDS[chapter][3])
+		var center: Vector2 = FIELDS[chapter][3]
+		var basin = map_pixel(center)
 		var radius = [0.073,0.0,0.054,0.061][chapter]*size.x
+		var depth = minf(radius*0.53,map_pixel(center+Vector2.DOWN).y-basin.y)
 		var shore = PackedVector2Array()
 		for i in 112:
 			var angle = TAU*float(i)/112.0
 			var edge = 1.0+0.11*sin(3*angle)+0.07*cos(5*angle+0.6)+0.022*sin(11*angle)
-			shore.append(Vector2(cos(angle),0.53*sin(angle))*radius*edge)
+			shore.append(Vector2(radius*cos(angle),depth*sin(angle))*edge)
 		for wash in 9:
 			var ring = PackedVector2Array()
 			for i in shore.size():
@@ -201,7 +203,7 @@ func draw_waterways() -> void:
 				var tip = basin+shore[(i+1)%shore.size()]*(1.012+0.035*sin(i*1.4))
 				draw_line(edge,tip,Color("364f5380"),1.4+slip,true)
 			if i%2==1 and slip<0.46:
-				var shift = Vector2(sin(i*7.0)*0.59,cos(i*4.3)*0.36)*radius
+				var shift = Vector2(sin(i*7.0)*0.59*radius,cos(i*4.3)*0.68*depth)
 				var sweep = radius*(0.025+0.09*pow(absf(slip),1.5))
 				var at = basin+shift
 				var ended = at+Vector2(sweep+0.8,sweep*0.26*sin(i))
