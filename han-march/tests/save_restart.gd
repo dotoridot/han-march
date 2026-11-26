@@ -64,6 +64,51 @@ func commit_failures(app) -> bool:
 	print("Join, promotion, conversion and redraw: write failure rolls back; retry commits once")
 	return true
 
+func tactics_restart(app, mode: String) -> bool:
+	var game = app.game
+	var id = "cao" if OS.get_environment("HAN_MARCH_TACTIC_HERO")=="cao" else "han"
+	var effect = "왕의 신호 (유방의 기세 베기 피해 +25%)" if id=="han" else "방패와 장창 (조참의 공격 피해 +30%)"
+	if mode=="tactics-write":
+		app.run_seed.text = "12345"
+		app.start_historical()
+		app.choose_route(0)
+		app.complete_travel()
+		Pilot.pilot(game,5000)
+		if game.phase!="camp":
+			return false
+		var camp: Dictionary = game.checkpoint()
+		camp.heroes.append_array(["han","cao"])
+		camp.perks["han"] = []
+		camp.perks["cao"] = []
+		camp.rolled = true
+		camp.draft_candidate = id
+		camp.draft_result = "1면 · %s" % Campaign.HEROES[id][0]
+		if not game.restore(camp):
+			return false
+		var expected: Dictionary = game.project_candidate(id,"promote")
+		app.show_phase()
+		app.choose_draft_resolution("promote")
+		app.choose_perk(game.offerings[0].id)
+		if game.tactics!=expected.tactics or game.checkpoint().streams!=camp.streams or game.supply!=camp.supply:
+			return false
+	else:
+		app.continue_run()
+	if game.phase!="map" or game.promotion_level(id)!=1 or game.tactic_effects(game.tactics)!="방패 엄호 (한신이 지원 사격 사용) + "+effect:
+		return false
+	var proof = {"tactics":game.tactics,"ranks":game.promotions.duplicate(),"heroes":game.hero_keys.duplicate(),
+		"streams":game.checkpoint().streams.map(func(state): return str(state)),"supply":game.supply,"chapter":game.chapter}
+	if not game.choose_route(0):
+		return false
+	game.enter_battle()
+	proof["frames"] = Pilot.pilot(game,5000)
+	proof["result"] = game.phase
+	proof["support_hits"] = game.events.count(Campaign.TACTICS[game.tactics.support][0])
+	proof["player_hp"] = game.team[0].hp
+	if proof.result!="camp" or proof.support_hits==0:
+		return false
+	print(JSON.stringify(proof))
+	return AudioServer.is_bus_mute(0)
+
 func verify() -> void:
 	var app = Scene.instantiate()
 	root.add_child(app)
@@ -71,6 +116,13 @@ func verify() -> void:
 	app.set_process(false)
 	var game = app.game
 	var mode = OS.get_environment("HAN_MARCH_SAVE_TEST")
+	if mode in ["tactics-write","tactics-read"]:
+		var passed = tactics_restart(app,mode)
+		app.queue_free()
+		await process_frame
+		await process_frame
+		quit(0 if passed else 1)
+		return
 	if mode in ["write","failure"]:
 		app.run_seed.text = "12345"
 		app.start_historical()

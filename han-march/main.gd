@@ -421,7 +421,7 @@ func complete_travel() -> void:
 
 func battle_view() -> void:
 	objective = words(screen_body,game.entry().goal,21,GOLD)
-	action_status = words(screen_body,"",15,PAPER)
+	action_status = words(screen_body,"",15,PAPER,true)
 	trail_status = words(screen_body,game.entry().description,14,SUBTLE)
 	if game.chapter==3:
 		note_dialogue(screen_body,"gaixia_route")
@@ -474,7 +474,9 @@ func camp_view() -> void:
 	columns.add_child(scroll)
 	var sheet = column(scroll,11)
 	sheet.size_flags_horizontal = SIZE_EXPAND_FILL
-	words(sheet,"야영지  /  보급 %d  /  %s" % [game.supply,game.tactic_name()],20)
+	words(sheet,"야영지 / 보급 %d / %s" % [game.supply,"역사 행군" if game.mode=="history" else "가상 행군"],20,PAPER,true)
+	var current: String = game.tactic_effects(game.tactics)
+	words(sheet,"현재 진법: "+current,16,GOLD,true)
 	if game.chapter==1:
 		note_dialogue(sheet,"rescued")
 	if not game.draft_done:
@@ -500,34 +502,49 @@ func camp_view() -> void:
 			var b = action(options,option[1]+(" ✓" if game.draft_plan==id else ""),change_odds.bind(id))
 			b.disabled = game.supply<=0 and id!="balance"
 		var weights = game.draft_weights()
-		var numbers: Array[String] = []
-		for i in weights.size():
-			numbers.append("%s %d/18" % [Campaign.HEROES[Campaign.DRAFT[i]][0],weights[i]])
-		words(sheet,"   /   ".join(numbers),14,GOLD,true)
+		var supply_gain: int = game.duplicate_supply_gain(0 if game.draft_plan=="balance" else 1)
 		primary_button = action(sheet,"18면 주사위 굴리기",perform_roll,true)
+		for i in weights.size():
+			var id: String = Campaign.DRAFT[i]
+			var after := ""
+			if weights[i]==0:
+				after = "역사 행군에서는 등용할 수 없습니다." if id=="xiang" and game.mode=="history" else "이번 굴림에서는 나오지 않습니다."
+			elif id not in game.hero_keys:
+				after = draft_tactic_line(id,"","합류",current)
+			elif game.promotion_level(id)<Campaign.PROMOTION_CAP:
+				after = draft_tactic_line(id,"promote","승급",current)
+				after += " / 보급 +%d 전환 시 현재 진법 유지" % supply_gain
+			else:
+				after = draft_tactic_line(id,"supply","승급 상한 / 보급 +%d 전환" % supply_gain,current)
+			words(sheet,"%s %d/18 | %s" % [Campaign.HEROES[id][0],weights[i],after],14,PAPER,true)
 	else:
 		var id: String = game.draft_candidate
 		if id.is_empty():
 			words(sheet,"저장된 굴림의 등용 후보를 확인할 수 없습니다.",16,SUBTLE,true)
 		elif id in game.hero_keys:
 			var level: int = game.promotion_level(id)
-			var gain: int = game.duplicate_supply_gain()
-			words(sheet,"%d면 / %s 중복 / 승급 %d/%d" % [number,Campaign.HEROES[id][0],level,Campaign.PROMOTION_CAP],17,GOLD,true)
-			words(sheet,"단계마다 %s. 최대 %d단계에서는 보급만 받을 수 있습니다." % [
-				Campaign.PROMOTION[id][0],Campaign.PROMOTION_CAP],15,SUBTLE,true)
-			words(sheet,"보급 전환 +%d / 상한 %d, 현재 수령 +%d" % [Campaign.DUPLICATE_SUPPLY,Campaign.SUPPLY_CAP,gain],15,SUBTLE,true)
-			var rewards = flow(sheet)
+			var gain: int = game.project_candidate(id,"supply").gain
 			var capped = level>=Campaign.PROMOTION_CAP
+			words(sheet,"%d면 / %s 중복 / 승급 %d/%d" % [number,Campaign.HEROES[id][0],level,Campaign.PROMOTION_CAP],17,GOLD,true)
+			if not capped:
+				words(sheet,draft_tactic_line(id,"promote","승급",current),15,PAPER,true)
+			words(sheet,draft_tactic_line(id,"supply","보급 +%d 전환" % gain,current),15,PAPER,true)
+			var rewards = flow(sheet)
 			var promote_label = "승급 상한 도달" if capped else "승급 %d → %d%s" % [level,level+1," ✓" if draft_resolution=="promote" else ""]
 			var promote = action(rewards,promote_label,choose_draft_resolution.bind("promote"))
 			promote.disabled = capped
 			var stores = action(rewards,"보급 +%d%s" % [gain," ✓" if draft_resolution=="supply" else ""],
 				choose_draft_resolution.bind("supply"))
 			if draft_resolution.is_empty(): primary_button = stores if promote.disabled else promote
+			words(sheet,"승급 단계마다 %s. 승급 상한 %d단계 / 보급 상한 %d, 전환 시 최대 +%d" % [
+				Campaign.PROMOTION[id][0],Campaign.PROMOTION_CAP,Campaign.SUPPLY_CAP,Campaign.DUPLICATE_SUPPLY],15,SUBTLE,true)
 		else:
 			words(sheet,"%d면 / %s 합류 예정" % [number,Campaign.HEROES[id][0]],17,GOLD,true)
+			words(sheet,draft_tactic_line(id,"","합류",current),15,PAPER,true)
 		var again = action(sheet,"후보 버리고 다시 굴리기 / 보급 2",perform_redraw)
 		again.disabled = game.rerolled or game.supply<2
+	words(sheet,"주 진법은 방패 엄호 > 약낭 돌파, 보조 진법은 왕의 신호 > 방패와 장창 순으로 각각 하나까지 적용됩니다.",14,SUBTLE,true)
+	words(sheet,"유방과 한신은 한신 1단계부터 왕의 신호가 열립니다. 번쾌와 조참은 합류 즉시 방패와 장창을 쓰며, 조참의 승급과 한신의 2단계 이후 승급마다 해당 피해 증가량이 10%p 오릅니다.",14,SUBTLE,true)
 	var choices = flow(sheet)
 	for id in game.hero_keys:
 		var marks: Array = game.names_upgrades[id]
@@ -549,6 +566,9 @@ func camp_view() -> void:
 		words(sheet,"%s / %s / MP %d, 재사용 %.1f초" % [info[0],info[1],price[0],price[1]],14,SUBTLE,true)
 	if game.draft_done:
 		words(sheet,"강화를 고르면 등용 보상을 확정하고 출발합니다.",15,SUBTLE,true)
+		if not game.draft_candidate.is_empty() and (game.draft_candidate not in game.hero_keys or not draft_resolution.is_empty()):
+			var projected: Dictionary = game.project_candidate(game.draft_candidate,draft_resolution)
+			words(sheet,"출발 후 진법: "+game.tactic_effects(projected.tactics),15,GOLD,true)
 	else:
 		words(sheet,"등용을 건너뛰려면 바로 강화를 고르세요.",15,SUBTLE,true)
 	var needs_resolution = game.draft_candidate in game.hero_keys and draft_resolution.is_empty()
@@ -558,6 +578,11 @@ func camp_view() -> void:
 		words(upgrade,perk.text,14,SUBTLE,true)
 		b.disabled = needs_resolution
 		if primary_button==null and not needs_resolution: primary_button = b
+
+func draft_tactic_line(id: String, resolution: String, label: String, current: String) -> String:
+	var projected: Dictionary = game.project_candidate(id,resolution)
+	var after: String = game.tactic_effects(projected.tactics)
+	return "%s: %s (유지)" % [label,after] if current==after else "%s: %s → %s" % [label,current,after]
 
 func change_odds(id: String) -> void:
 	var plan = game.draft_plan
@@ -821,7 +846,7 @@ func combat_input(dt: float) -> void:
 		last_message = game.events.back()
 		last_message_left = 2.0
 		for event in game.events:
-			if event in ["응급 처치","방패 엄호","약낭 돌파","굳건한 자세","숨 고르기","지원 사격","돌파 찌르기"]:
+			if event in ["응급 처치","방패 엄호","약낭 돌파","왕의 신호","방패와 장창","굳건한 자세","숨 고르기","지원 사격","돌파 찌르기"]:
 				game.queue_cue("support",2)
 		game.events.clear()
 	if not game.sound_cue.is_empty():
