@@ -147,6 +147,59 @@ func departure_checks() -> void:
 	app.queue_free()
 	await process_frame
 
+func battle_resume_checks() -> void:
+	var test_profile = OS.get_environment("HAN_MARCH_PROFILE")
+	if test_profile.is_empty():
+		return
+	var profile = test_profile.path_join("battle-resume")
+	var folder_error = DirAccess.make_dir_recursive_absolute(profile)
+	expect(folder_error==OK,"Battle resume creates its own test profile")
+	if folder_error!=OK:
+		return
+	OS.set_environment("HAN_MARCH_PROFILE",profile)
+	var scene = load("res://main.tscn")
+	var app = scene.instantiate()
+	root.add_child(app)
+	app.set_process(false)
+	app.set_physics_process(false)
+	app.motion_reduced = false
+	app.run_seed.text = "12345"
+	app.start_historical()
+	app.choose_route(0)
+	var departure: Dictionary = app.checkpoint_data.duplicate(true)
+	app.complete_travel()
+	var game = app.game
+	var cache = game.targets.filter(func(target): return target[0]=="cache")
+	expect(cache.size()==1 and game.board_mask.mud,"Legacy departure seed creates the mud supply cart")
+	if cache.size()==1:
+		game.team[0].p = cache[0][1]
+		game.interact(game.team[0],0.7,true)
+		expect(game.supply==departure.supply+2,"Cart interaction awards two supplies in battle")
+		app.toggle_motion()
+		expect(app.checkpoint_data==departure,"Saving options keeps the departure checkpoint unchanged")
+	game.clear_battle()
+	app.queue_free()
+	await process_frame
+
+	app = scene.instantiate()
+	root.add_child(app)
+	app.set_process(false)
+	app.set_physics_process(false)
+	app.continue_run()
+	game = app.game
+	expect(app.motion_reduced and game.phase=="travel" and game.supply==departure.supply,"Loading an existing versioned checkpoint restores departure supply and saved option")
+	app.complete_travel()
+	cache = game.targets.filter(func(target): return target[0]=="cache")
+	expect(cache.size()==1,"Resumed battle recreates the unclaimed cart")
+	if cache.size()==1:
+		game.team[0].p = cache[0][1]
+		game.interact(game.team[0],0.7,true)
+		expect(game.supply==departure.supply+2,"Resumed battle cannot accumulate the cart award twice")
+	game.clear_battle()
+	app.queue_free()
+	await process_frame
+	OS.set_environment("HAN_MARCH_PROFILE",test_profile)
+
 func checkpoint_checks() -> void:
 	var g = make()
 	g.new_run(9090,"fiction")
@@ -214,11 +267,57 @@ func tactics_checks() -> void:
 	g.clear_battle()
 	g.host.queue_free()
 
+func opening_path(seed_value: int, route: int) -> Dictionary:
+	var g = make()
+	g.new_run(seed_value,"history")
+	var proof = g.preview_route(route)
+	var stream = g.field_rng.state
+	g.preview_route(1-route)
+	expect(g.field_rng.state==stream,"Preview does not spend the field RNG")
+	g.choose_route(route)
+	g.enter_battle()
+	expect(proof.weather==g.field_rule and proof.opponents==g.foes.size(),"Forecast matches real first battle")
+	var squad = g.foes.map(func(enemy): return enemy.id)
+	var consequence = g.targets[1][0]
+	var stores = g.supply
+	Pilot.pilot(g,4500)
+	var offer = g.offerings.map(func(perk): return perk.id)
+	var result = {"seed":seed_value,"route":route,"weather":proof.weather,"squad":squad,
+		"event":consequence,"stores_at_entry":stores,"phase":g.phase,"perk_choices":offer}
+	g.clear_battle()
+	g.host.queue_free()
+	return result
+
+func diversity_checks() -> void:
+	var one = opening_path(12345,0)
+	var alternate = opening_path(12345,1)
+	expect(one.squad.size()!=alternate.squad.size() and one.stores_at_entry!=alternate.stores_at_entry,"Same seed route changes playable enemy count and supply")
+	var other = {}
+	for candidate in range(12500,12508):
+		other = opening_path(candidate,0)
+		if other.phase=="camp" and one.phase=="camp" and other.event!=one.event and other.perk_choices!=one.perk_choices:
+			break
+	expect(one.phase=="camp" and other.phase=="camp" and one.squad!=other.squad and one.event!=other.event and one.perk_choices!=other.perk_choices,"Two worked history seeds change deployed enemies, optional event and actual growth offers")
+	print("Opening paths ",JSON.stringify([one,alternate,other]))
+	var g = make()
+	g.new_run(12345,"history")
+	g.choose_route(0)
+	g.enter_battle()
+	var option = g.targets[1]
+	var before = g.supply
+	g.team[0].p = option[1]
+	g.interact(g.team[0],0.70,true)
+	expect(g.field_rule=="진흙" and g.supply==before+2 and not g.scout_bonus.is_empty(),"Muddy salvage is an actionable supply reward")
+	g.clear_battle()
+	g.host.queue_free()
+
 func verify() -> void:
 	timing_checks()
 	await departure_checks()
+	await battle_resume_checks()
 	checkpoint_checks()
 	tactics_checks()
+	diversity_checks()
 	var classic = expedition(12345,"history",[0,0,1,0])
 	var fantasy_seed = 1
 	var rng = RandomNumberGenerator.new()
@@ -229,6 +328,20 @@ func verify() -> void:
 	var fiction = expedition(fantasy_seed,"fiction",[1,1,0,1])
 	print("Fiction fixture seed ",fantasy_seed," heroes ",fiction.hero_keys)
 	expect(classic.completed.size()==4 and fiction.completed.size()==4,"Two playable routes reach founding")
+	var defeated = expedition(fantasy_seed,"fiction",[1])
+	expect(defeated.hero_keys.has("xiang") and defeated.names_upgrades.values().any(func(list): return not list.is_empty()),"Defeat fixture run has a recruit and a perk to reset")
+	defeated.choose_route(0)
+	defeated.enter_battle()
+	defeated.team[0].hp = 0
+	defeated.tick(Campaign.STEP,Vector2.ZERO,Vector2.UP,false,false,false,false)
+	expect(defeated.phase=="lost","A second-chapter loss ends the advanced run")
+	defeated.new_run(520,"history")
+	expect(defeated.hero_keys==["liu","fan","xiao"] and defeated.supply==3 and defeated.names_upgrades.values().all(func(list): return list.is_empty()),"New march drops recruited heroes, supplies and perks")
+	expect(defeated.chapter==0 and defeated.completed.is_empty() and defeated.record.has("lost") and defeated.record.has("fantasy"),"New march resets the route and retains discovered stories")
+	defeated.choose_route(0)
+	defeated.enter_battle()
+	Pilot.pilot(defeated,5000)
+	expect(defeated.phase=="camp" and defeated.draft_result.is_empty() and defeated.roll(),"First camp in restarted march gets a fresh free roll")
 	var g = make()
 	g.new_run(245,"history")
 	g.choose_route(0)
@@ -282,7 +395,7 @@ func verify() -> void:
 	g.advance(g.offerings[0].id)
 	expect(g.hero_keys.size()<=4,"Keeping a draw grants at most one recruit")
 	print("Campaign checks ",checks-failed.size(),"/",checks)
-	for backend in [g,classic,fiction]:
+	for backend in [g,classic,fiction,defeated]:
 		backend.clear_battle()
 		backend.host.queue_free()
 	await process_frame
