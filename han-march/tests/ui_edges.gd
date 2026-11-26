@@ -266,6 +266,27 @@ func order_edges() -> void:
 		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted) or ("조참 최대 및 시작 MP +4" in camp_labels())!=promoted:
 			push_error("Saved supply, rank or RNG differs from the forecast")
 			status = 1
+	var convoy = camp.duplicate(true)
+	convoy.chapter = 1
+	convoy.rolled = true
+	convoy.draft_candidate = "cao"
+	convoy.draft_result = "18면 / 조참"
+	ui.game.restore(convoy)
+	ui.show_phase()
+	if directory and ui.save():
+		DirAccess.copy_absolute(ui.store_path,directory.path_join("convoy-camp.cfg"))
+	ui.choose_draft_resolution("supply")
+	ui.choose_perk(ui.game.offerings[0].id)
+	await snap("orders-convoy-confirmed")
+	for index in [-1,0,1]:
+		ui.refresh_map_prompt(index)
+		await process_frame
+		await process_frame
+		for control in ui.screen_body.find_children("*","Control",true,false):
+			if (control is Label or control is Button) and not root.get_visible_rect().encloses(control.get_global_rect()):
+				push_error("The confirmed convoy route or prompt is clipped: %s" % control.text)
+				status = 1
+	print("Convoy map / all labels and buttons inspected in ",root.size)
 	await ration_heal(camp)
 	if OS.get_environment("HAN_MARCH_FORECAST_AUDIO_TEST")=="1":
 		check_draft_audio(camp)

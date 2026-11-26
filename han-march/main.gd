@@ -372,9 +372,12 @@ func map_view(reveal_draft: bool) -> void:
 	var data = game.entry()
 	var orders: Array = game.names_upgrades["liu"]
 	var headline = row(screen_body)
-	words(headline,"%s  /  %s" % [data.year,data.name],23,GOLD)
-	if not confirmed_draft.is_empty():
+	var has_draft = not confirmed_draft.is_empty()
+	words(headline,"%s  /  %s" % [data.year,data.name],23,GOLD,has_draft)
+	if has_draft:
+		mounted_map.custom_minimum_size.y = 100
 		var result = row(headline,4)
+		result.size_flags_horizontal = SIZE_EXPAND_FILL
 		dice_view = FeatureModel.new()
 		dice_view.seal = false
 		dice_view.reduced = motion_reduced
@@ -384,9 +387,10 @@ func map_view(reveal_draft: bool) -> void:
 		var details = column(result,2)
 		details.size_flags_horizontal = SIZE_EXPAND_FILL
 		details.alignment = BoxContainer.ALIGNMENT_CENTER
-		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,15,GOLD)
-		words(details,confirmed_draft.text,16,confirmed_draft.color)
-	headline.add_spacer(false)
+		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,15,GOLD,true)
+		words(details,confirmed_draft.text,16,confirmed_draft.color,true)
+	else:
+		headline.add_spacer(false)
 	words(headline,"보급 %d   ·   시드 %d" % [game.supply,game.seed_value],15,SUBTLE)
 	note_dialogue(screen_body,data.id)
 	var choices = row(screen_body)
