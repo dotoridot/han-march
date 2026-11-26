@@ -329,8 +329,12 @@ func map_view() -> void:
 	words(screen_body,"경유지, 경로와 전장 과제는 창작입니다.",13,SUBTLE)
 
 func choose_route(index: int) -> void:
+	var before = game.checkpoint()
 	if game.choose_route(index):
-		save()
+		if not save():
+			game.restore(before)
+			show_save_error()
+			return
 		travel_time = 0.0
 		show_phase()
 		if motion_reduced:
