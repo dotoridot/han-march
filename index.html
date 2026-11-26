@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#191c19">
+  <title>초한: 패현의 깃발</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="game.js"></script>
+  <script defer src="art.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="brand"><span class="seal" aria-hidden="true">沛</span><span>초한 <b>패현의 깃발</b></span></div>
+      <button id="journal">행군 기록</button>
+    </header>
+    <div class="layout">
+      <section class="stage" aria-label="전장">
+        <div class="map-head">
+          <div><span id="place">패현 성문</span><span id="chapter">기원전 209년, 진 말</span></div>
+          <button id="pause" hidden>일시정지</button>
+        </div>
+        <p id="brief" hidden></p>
+        <div class="viewport">
+          <canvas id="field" width="480" height="288" aria-label="조작용 전장" aria-describedby="controls"></canvas>
+          <div id="prompt" hidden></div>
+          <div id="veil" class="veil"></div>
+        </div>
+        <div id="controls" class="controls">
+          <span><kbd>WASD</kbd> 이동</span><span><kbd>마우스 클릭</kbd> 조준 및 공격</span>
+          <span><kbd>Space</kbd> 가까운 적 공격</span><span><kbd>Q</kbd> 집결</span>
+          <span><kbd>E 길게</kbd> 상호작용</span><span><kbd>Esc</kbd> 일시정지</span>
+        </div>
+      </section>
+      <aside class="panel" aria-label="전황">
+        <div class="side-section mission"><h2>임무</h2><div id="goals"></div></div>
+        <div class="side-section"><h2>패현군 <span id="slots"></span></h2><div id="party"></div></div>
+        <div class="side-section log-section"><h2>전황</h2><ol id="log"></ol></div>
+      </aside>
+    </div>
+  </main>
+  <p id="announcement" class="sr-only" role="status"></p>
+  <dialog id="dialog" aria-labelledby="dialog-title"><div id="dialog-content"></div></dialog>
+</body>
+</html>
