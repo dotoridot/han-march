@@ -116,6 +116,37 @@ func timing_checks() -> void:
 	g.clear_battle()
 	g.host.queue_free()
 
+func departure_checks() -> void:
+	var profile = OS.get_environment("HAN_MARCH_PROFILE")
+	if profile.is_empty():
+		return
+	var app = load("res://main.tscn").instantiate()
+	root.add_child(app)
+	app.set_process(false)
+	app.set_physics_process(false)
+	app.store_path = profile.path_join("departure-check.cfg")
+	app.motion_reduced = false
+	app.run_seed.text = "12345"
+	app.start_historical()
+	var store: String = app.store_path
+	var before: Dictionary = app.game.checkpoint()
+	var disk = FileAccess.get_file_as_string(store)
+	expect(not disk.is_empty(),"Departure fixture has a committed map")
+	app.store_path = profile.path_join("missing-directory/campaign.cfg")
+	app.choose_route(0)
+	expect(app.game.checkpoint()==before and app.modal_active and app.save_error,"Failed departure keeps map, supply and random streams and reports error")
+	expect(FileAccess.get_file_as_string(store)==disk,"Failed departure preserves the existing checkpoint")
+	app.store_path = store
+	app.close_modal()
+	app.choose_route(0)
+	var cfg = ConfigFile.new()
+	var code = cfg.load(store)
+	expect(code==OK and app.game.phase=="travel" and not app.save_error and cfg.get_value("checkpoint","state",{})==app.game.checkpoint(),"Retry saves the selected route before travel")
+	app.close_modal()
+	app.game.clear_battle()
+	app.queue_free()
+	await process_frame
+
 func checkpoint_checks() -> void:
 	var g = make()
 	g.new_run(9090,"fiction")
@@ -136,11 +167,17 @@ func checkpoint_checks() -> void:
 	var cfg = ConfigFile.new()
 	cfg.set_value("checkpoint","state",visible)
 	var path = OS.get_environment("HAN_MARCH_TEST_SAVE")
-	if path.is_empty(): path = "user://roundtrip-check.cfg"
-	expect(cfg.save(path)==OK,"Checkpoint writes on disk")
 	var restored = make()
-	cfg = ConfigFile.new()
-	expect(cfg.load(path)==OK and restored.restore(cfg.get_value("checkpoint","state",{})),"Checkpoint disk round trip")
+	if path.is_empty():
+		var profile = OS.get_environment("HAN_MARCH_PROFILE")
+		if not profile.is_empty():
+			path = profile.path_join("roundtrip-check.cfg")
+	if path.is_empty():
+		expect(restored.restore(visible),"Checkpoint restores in memory without a profile")
+	else:
+		expect(cfg.save(path)==OK,"Checkpoint writes in the test profile")
+		cfg = ConfigFile.new()
+		expect(cfg.load(path)==OK and restored.restore(cfg.get_value("checkpoint","state",{})),"Checkpoint disk round trip")
 	expect(restored.draft_result==g.draft_result and restored.draft_candidate==g.draft_candidate and restored.supply==g.supply and not restored.roll(),"Committed result, cost and advanced RNG are durable")
 	g.advance(g.offerings[0].id)
 	restored.advance(restored.offerings[0].id)
@@ -179,6 +216,7 @@ func tactics_checks() -> void:
 
 func verify() -> void:
 	timing_checks()
+	await departure_checks()
 	checkpoint_checks()
 	tactics_checks()
 	var classic = expedition(12345,"history",[0,0,1,0])
