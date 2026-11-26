@@ -147,6 +147,7 @@ func campaign(seed_value: int, mode: String, routes: Array) -> void:
 		var top: Vector3 = die.pivot.basis*die.number_frames[number-1].z
 		expect(top.dot(die.camera.basis.z)>0.999,"Actual revealed face turns to the camera")
 		var perk: String = favored if app.game.offerings.any(func(option): return option.id==favored) else app.game.offerings[0].id
+		if app.game.draft_candidate in app.game.hero_keys: app.choose_draft_resolution("supply")
 		app.choose_perk(perk)
 		expect(app.game.names_upgrades["liu"].has(perk),"Camp choice applies a deterministic offered upgrade")
 	expect(app.game.phase=="ending" and app.game.completed.size()==4,"Mounted route campaign reaches the founding")

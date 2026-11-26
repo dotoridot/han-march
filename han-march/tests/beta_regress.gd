@@ -63,7 +63,7 @@ func trial(seed_value: int, mode: String, route_mask: int) -> void:
 		game.offer_for(candidate)
 		expect(game.offerings.size()==3 and game.offerings.any(func(p): return p.tag==Campaign.HEROES[candidate][2] or game.hero_keys.any(func(id): return Campaign.HEROES[id][2]==p.tag)),"tagged offer contract",seed_value)
 		var perk = game.offerings[(seed_value+chapter)%3].id
-		game.advance(perk)
+		game.advance(perk,"supply" if game.draft_candidate in game.hero_keys else "")
 		expect(game.names_upgrades[candidate].has(perk),"perk not recorded",seed_value)
 	game.clear_battle()
 	replay.clear_battle()

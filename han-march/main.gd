@@ -26,6 +26,7 @@ var map_prompt: Label
 var map_prompt_index := -2
 var skill_status: Label
 var presented_roll := ""
+var draft_resolution := ""
 var march_at := Vector2(0,4.2)
 var marching := false
 var travel_from := 0.0
@@ -257,6 +258,8 @@ func empty(container: Node) -> void:
 		child.queue_free()
 
 func defer_focus(node: Control) -> void:
+	if node==primary_button and game.phase=="camp":
+		await get_tree().process_frame
 	if is_instance_valid(node) and node.is_visible_in_tree() and (not node is BaseButton or not node.disabled):
 		node.grab_focus()
 
@@ -272,6 +275,8 @@ func show_phase() -> void:
 	var old_phase = announced_phase
 	empty(screen_body)
 	announced_phase = game.phase
+	if game.phase!="camp" or old_phase!="camp":
+		draft_resolution = ""
 	if game.phase=="battle" and old_phase!="battle":
 		inspected_ally = -1
 	screen_body.size_flags_vertical = SIZE_FILL
@@ -463,6 +468,7 @@ func camp_view() -> void:
 	scroll.size_flags_horizontal = SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	scroll.custom_minimum_size.y = 305
+	scroll.follow_focus = true
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	screen_body.size_flags_vertical = SIZE_EXPAND_FILL
 	columns.add_child(scroll)
@@ -471,7 +477,10 @@ func camp_view() -> void:
 	words(sheet,"야영지  /  보급 %d  /  %s" % [game.supply,game.tactic_name()],20)
 	if game.chapter==1:
 		note_dialogue(sheet,"rescued")
-	words(sheet,"처음 굴리기는 무료입니다. 확률을 바꾸면 보급 1을 씁니다. 강화를 고르면 등용을 확정하고 출발합니다.",15,SUBTLE,true)
+	if not game.draft_done:
+		words(sheet,"균형은 무료, 우대는 굴릴 때 보급 1을 씁니다.",15,SUBTLE,true)
+		if game.first_free_recruit():
+			words(sheet,"첫 야영지의 균형 굴림은 미보유 장수가 나옵니다.",15,GOLD,true)
 	var die_column = column(columns,5)
 	die_column.custom_minimum_size.x = 155
 	dice_view = FeatureModel.new()
@@ -479,33 +488,54 @@ func camp_view() -> void:
 	dice_view.reduced = motion_reduced
 	dice_view.custom_minimum_size = Vector2(155,160)
 	die_column.add_child(dice_view)
-	var number = game.draft_result.get_slice("면",0).to_int()
+	var number = game.draft_result.get_slice("면",0).to_int() if not game.draft_candidate.is_empty() else 0
 	dice_view.set_face(number,game.draft_result!=presented_roll and not motion_reduced)
 	presented_roll = game.draft_result
 	var face_label = words(die_column,"눈 %d / 18" % number if number>0 else "18면 등용 주사위",15,GOLD)
 	face_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var options = flow(sheet)
-	for option in [["balance","균형 · 무료"],["shield","방패 우대 · 보급 1"],["lance","장병기 우대 · 보급 1"]]:
-		var id: String = option[0]
-		var b = action(options,option[1]+(" ✓" if game.draft_plan==id else ""),change_odds.bind(id))
-		b.disabled = game.draft_done or game.supply<=0 and id!="balance"
-	var weights = game.draft_weights()
-	var numbers: Array[String] = []
-	for i in weights.size():
-		numbers.append("%s %d/18 · %.1f%%" % [Campaign.HEROES[Campaign.DRAFT[i]][0],weights[i],float(weights[i])/18*100])
-	words(sheet,"   /   ".join(numbers),14, GOLD,true)
-	var rolls = flow(sheet)
-	primary_button = action(rolls,"18면 주사위 굴리기",perform_roll,true)
-	primary_button.disabled = game.draft_done
-	var again = action(rolls,"다시 굴리기 / 보급 2",perform_redraw)
-	again.disabled = not game.draft_done or game.rerolled or game.supply<2
-	words(sheet,game.draft_result,16,PAPER)
+	if not game.draft_done:
+		var options = flow(sheet)
+		for option in [["balance","균형 / 무료"],["shield","방패 우대 / 보급 1"],["lance","장병기 우대 / 보급 1"]]:
+			var id: String = option[0]
+			var b = action(options,option[1]+(" ✓" if game.draft_plan==id else ""),change_odds.bind(id))
+			b.disabled = game.supply<=0 and id!="balance"
+		var weights = game.draft_weights()
+		var numbers: Array[String] = []
+		for i in weights.size():
+			numbers.append("%s %d/18" % [Campaign.HEROES[Campaign.DRAFT[i]][0],weights[i]])
+		words(sheet,"   /   ".join(numbers),14,GOLD,true)
+		primary_button = action(sheet,"18면 주사위 굴리기",perform_roll,true)
+	else:
+		var id: String = game.draft_candidate
+		if id.is_empty():
+			words(sheet,"저장된 굴림의 등용 후보를 확인할 수 없습니다.",16,SUBTLE,true)
+		elif id in game.hero_keys:
+			var level: int = game.promotion_level(id)
+			var gain: int = game.duplicate_supply_gain()
+			words(sheet,"%d면 / %s 중복 / 승급 %d/%d" % [number,Campaign.HEROES[id][0],level,Campaign.PROMOTION_CAP],17,GOLD,true)
+			words(sheet,"단계마다 %s. 최대 %d단계에서는 보급만 받을 수 있습니다." % [
+				Campaign.PROMOTION[id][0],Campaign.PROMOTION_CAP],15,SUBTLE,true)
+			words(sheet,"보급 전환 +%d / 상한 %d, 현재 수령 +%d" % [Campaign.DUPLICATE_SUPPLY,Campaign.SUPPLY_CAP,gain],15,SUBTLE,true)
+			var rewards = flow(sheet)
+			var capped = level>=Campaign.PROMOTION_CAP
+			var promote_label = "승급 상한 도달" if capped else "승급 %d → %d%s" % [level,level+1," ✓" if draft_resolution=="promote" else ""]
+			var promote = action(rewards,promote_label,choose_draft_resolution.bind("promote"))
+			promote.disabled = capped
+			var stores = action(rewards,"보급 +%d%s" % [gain," ✓" if draft_resolution=="supply" else ""],
+				choose_draft_resolution.bind("supply"))
+			if draft_resolution.is_empty(): primary_button = stores if promote.disabled else promote
+		else:
+			words(sheet,"%d면 / %s 합류 예정" % [number,Campaign.HEROES[id][0]],17,GOLD,true)
+		var again = action(sheet,"후보 버리고 다시 굴리기 / 보급 2",perform_redraw)
+		again.disabled = game.rerolled or game.supply<2
 	var choices = flow(sheet)
 	for id in game.hero_keys:
 		var marks: Array = game.names_upgrades[id]
 		var title: String = Campaign.HEROES[id][0] + " · " + Campaign.HEROES[id][2]
 		var candidate = action(choices,title + (" ✓" if id==game.offered_to else ""),focus_candidate.bind(id))
 		candidate.tooltip_text = "고른 강화 %d개" % marks.size()
+		if Campaign.PROMOTION.has(id):
+			candidate.tooltip_text += " / 승급 %d/%d" % [game.promotion_level(id),Campaign.PROMOTION_CAP]
 	var active = game.names_upgrades[game.offered_to]
 	var names: Array[String] = []
 	for perk in Campaign.PLAN.perks:
@@ -517,19 +547,25 @@ func camp_view() -> void:
 		var info: Array = Campaign.SKILL_INFO[skill]
 		var price: Array = Campaign.ABILITIES[skill]
 		words(sheet,"%s / %s / MP %d, 재사용 %.1f초" % [info[0],info[1],price[0],price[1]],14,SUBTLE,true)
+	if game.draft_done:
+		words(sheet,"강화를 고르면 등용 보상을 확정하고 출발합니다.",15,SUBTLE,true)
+	else:
+		words(sheet,"등용을 건너뛰려면 바로 강화를 고르세요.",15,SUBTLE,true)
+	var needs_resolution = game.draft_candidate in game.hero_keys and draft_resolution.is_empty()
 	for perk in game.offerings:
 		var upgrade = column(sheet,3)
 		var b = action(upgrade,"%s / %s" % [perk.name,perk.tag],choose_perk.bind(perk.id))
 		words(upgrade,perk.text,14,SUBTLE,true)
-		if game.draft_done and primary_button.disabled: primary_button = b
-	if game.draft_done:
-		words(sheet,"강화 하나를 고르면 다음 행군 지도가 열립니다.",14,SUBTLE)
-	else:
-		words(sheet,"등용을 건너뛰려면 바로 강화를 고르세요.",14,SUBTLE)
+		b.disabled = needs_resolution
+		if primary_button==null and not needs_resolution: primary_button = b
 
 func change_odds(id: String) -> void:
+	var plan = game.draft_plan
 	if game.change_plan(id):
-		save()
+		if not save():
+			game.draft_plan = plan
+			show_save_error()
+			return
 		show_phase()
 
 func perform_roll() -> void:
@@ -549,7 +585,12 @@ func perform_redraw() -> void:
 			game.restore(before)
 			show_save_error()
 			return
+		draft_resolution = ""
 		show_phase()
+
+func choose_draft_resolution(id: String) -> void:
+	draft_resolution = id
+	show_phase()
 
 func focus_candidate(id: String) -> void:
 	game.offer_for(id)
@@ -557,9 +598,19 @@ func focus_candidate(id: String) -> void:
 	show_phase()
 
 func choose_perk(id: String) -> void:
-	if game.advance(id):
-		show_phase()
-		save()
+	var before = game.checkpoint()
+	var before_record = game.record.duplicate()
+	var before_position = march_at
+	if not game.advance(id,draft_resolution):
+		return
+	march_at = MountedMap.TRAILS[0][0]
+	if not save():
+		game.restore(before)
+		game.record = before_record
+		march_at = before_position
+		show_save_error()
+		return
+	show_phase()
 
 func result_view() -> void:
 	words(screen_body,"한의 건국" if game.phase=="ending" else "행군 중단",35,GOLD)

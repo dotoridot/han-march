@@ -14,6 +14,9 @@ const ENEMY_TIMING = {
 const ATTACK_POSES = {"sword":[0.0,0.14,0.30,0.52,0.69,0.88],"axe":[0.0,0.20,0.42,0.59,0.78,0.91]}
 const DODGE_STEPS = 22
 const SAVE_VERSION = 2
+const PROMOTION_CAP = 3
+const SUPPLY_CAP = 9
+const DUPLICATE_SUPPLY = 2
 const HEROES = {
 	"liu":["유방","검","전위",152,120,55],
 	"fan":["번쾌","도끼와 방패","방패",165,88,48],
@@ -32,6 +35,13 @@ const ODDS = {
 	"balance":[4,5,5,3,1],
 	"shield":[7,4,4,2,1],
 	"lance":[3,3,3,4,5],
+}
+const PROMOTION = {
+	"fan":["호위 중 받는 피해 감소 +6%p",0.06],
+	"xiao":["응급 처치 회복량 +4",4],
+	"han":["지원 사격 피해 +12%",0.12],
+	"cao":["돌파 찌르기 사거리 +8",8],
+	"xiang":["돌파 찌르기 피해 +18%",0.18],
 }
 const ABILITIES = {"brace":[7,7.0],"rally":[12,8.0],"command":[10,5.0],"shield":[7,4.8],"cover":[8,5.5],"heal":[6,3.4],"pierce":[7,4.0]}
 const SKILL_INFO = {
@@ -67,6 +77,7 @@ var board_mask = {"fog":false,"mud":false,"ridge":false}
 var scout_bonus = ""
 var hero_keys: Array = []
 var names_upgrades: Dictionary = {}
+var promotions: Dictionary = {}
 var team: Array = []
 var foes: Array = []
 var reserves: Array = []
@@ -169,6 +180,12 @@ func new_run(number: int, chosen: String) -> void:
 	selected_route = -1
 	hero_keys = ["liu","fan","xiao"]
 	names_upgrades = {"liu":[],"fan":[],"xiao":[]}
+	promotions.clear()
+	draft_plan = "balance"
+	draft_done = false
+	rerolled = false
+	draft_result = ""
+	draft_candidate = ""
 	completed.clear()
 	rescue_order.clear()
 	tactic = ""
@@ -205,7 +222,7 @@ func choose_route(index: int) -> bool:
 	if supply + path[3] < 0:
 		return false
 	selected_route = index
-	supply = clampi(supply+path[3],0,9)
+	supply = clampi(supply+path[3],0,SUPPLY_CAP)
 	var proposed = route_details(index,field_rng.randi())
 	battle_seed = proposed.seed
 	combat_start_state = combat_rng.state
@@ -223,7 +240,7 @@ func make_actor(id: String, pos: Vector2, enemy := false) -> Dictionary:
 	if id in ["xiang","captain","fiction"]:
 		weapon = "spear"
 	uid += 1
-	return {"uid":uid,"id":id,"p":pos,"hp":hp,"max_hp":hp,"mp":mp,"max_mp":mp,"fatigue":0.0,"face":Vector2.UP,"move":false,"step":0.0,"hit":0.0,"side":enemy,"weapon":weapon,"attack":{},"cool":{},"brace_time":0.0,"recoil":Vector2.ZERO,"decision":0.0,"role":"follow","perks":perks}
+	return {"uid":uid,"id":id,"p":pos,"hp":hp,"max_hp":hp,"mp":mp,"max_mp":mp,"fatigue":0.0,"face":Vector2.UP,"move":false,"step":0.0,"hit":0.0,"side":enemy,"weapon":weapon,"attack":{},"cool":{},"brace_time":0.0,"recoil":Vector2.ZERO,"decision":0.0,"role":"follow","perks":perks,"promotion":0 if enemy else promotion_level(id)}
 
 func clear_battle() -> void:
 	for u in team+foes:
@@ -317,8 +334,11 @@ func nearest(pos: Vector2, units: Array, max_range := INF) -> Dictionary:
 func has(u: Dictionary, id: String) -> bool:
 	return id in u.perks
 
-func max_range(u: Dictionary) -> float:
-	return HEROES[u.id][5] * (1.32 if has(u,"arch") and u.weapon=="bow" else 1.0) * (0.83 if board_mask.fog and u.weapon=="bow" else 1.0)
+func max_range(u: Dictionary, special := false) -> float:
+	var reach: float = HEROES[u.id][5] * (1.32 if has(u,"arch") and u.weapon=="bow" else 1.0) * (0.83 if board_mask.fog and u.weapon=="bow" else 1.0)
+	if special and u.id=="cao":
+		reach += PROMOTION.cao[1]*u.promotion
+	return reach
 
 func use_skill(user: Dictionary, id: String) -> bool:
 	var data: Array = ABILITIES[id]
@@ -490,18 +510,20 @@ func contact(u: Dictionary) -> void:
 	u.attack.contact = true
 	var direction: Vector2 = u.attack.dir
 	var power: float = (12 if u.side else 25) + combat_rng.randi_range(-1,1)
-	var distance = max_range(u)
+	var distance = max_range(u,u.attack.special)
 	var targets_to_hit = alive(team if u.side else foes)
 	if u.weapon == "aid":
 		var patient = nearest(u.attack.target,alive(team).filter(func(a): return a!=u and a.hp<a.max_hp-4),28)
 		if not patient.is_empty():
-			var heal: float = 24 if has(u,"medicine") else 17
+			var heal: float = (24 if has(u,"medicine") else 17) + PROMOTION.xiao[1]*u.promotion
 			patient.hp = minf(patient.max_hp,patient.hp+heal)
 			traces.append({"p":patient.p,"life":0.45,"kind":"heal","dir":Vector2.UP})
 			events.append("응급 처치")
 		return
 	if u.attack.special:
 		power *= 1.55
+		if u.id in ["han","xiang"]:
+			power *= 1.0+PROMOTION[u.id][1]*u.promotion
 	if has(u,"edge") and u.weapon in ["sword","spear"]:
 		power *= 1.25
 	if u.fatigue > 76:
@@ -561,7 +583,7 @@ func hurt(u: Dictionary, power: float, source: Dictionary = {}, attack_id := -1,
 	if u.brace_time>0:
 		power *= 0.45
 	if u.id=="fan" and u.role=="guard":
-		power *= 0.58
+		power *= 0.58-PROMOTION.fan[1]*u.promotion
 		if u.cool.get("shield",0.0)<=0.0 and not source.is_empty() and u.p.distance_to(source.p)<54 and u.attack.is_empty() and use_skill(u,"shield"):
 			attack(u,source.p,true)
 			events.append("번쾌 방패 반격")
@@ -629,7 +651,7 @@ func interact(player: Dictionary, dt: float, pressed: bool) -> void:
 			scout_bonus = "봉화를 밝혀 활 사거리를 되찾았습니다."
 			events.append(scout_bonus)
 		"cache":
-			supply = mini(9,supply+2)
+			supply = mini(SUPPLY_CAP,supply+2)
 			scout_bonus = "수레에서 보급 2를 건졌습니다."
 			events.append(scout_bonus)
 		"watch":
@@ -665,7 +687,7 @@ func run_ally(u: Dictionary, player: Dictionary, dt: float) -> void:
 	var needy = nearest(u.p,alive(team).filter(func(a): return a!=u and a.max_hp-a.hp>16),135)
 	var vulnerable = u.hp<u.max_hp*0.28 or u.fatigue>83
 	var guard_lead = nearest(player.p,foes,105)
-	var use_cover = u.id=="han" and (tactic=="shield_cover" or has(u,"arch")) and not foe.is_empty()
+	var use_cover = u.id=="han" and (tactic=="shield_cover" or has(u,"arch") or u.promotion>0) and not foe.is_empty()
 	if u.decision<=0:
 		board.set_var("options",{"rest":vulnerable,"heal":u.id=="xiao" and not needy.is_empty(),"guard":u.id=="fan" and not guard_lead.is_empty(),"cover":use_cover,"fight":u.id!="xiao" and not foe.is_empty(),"follow":true})
 		bt.update(dt)
@@ -695,12 +717,14 @@ func run_ally(u: Dictionary, player: Dictionary, dt: float) -> void:
 				toward(u,player.p,speed,50)
 			else:
 				toward(u,foe.p,speed,max_range(u)-12)
-			if u.p.distance_to(foe.p)<max_range(u) and u.attack.is_empty():
-				var use = "cover" if u.weapon=="bow" else "pierce"
-				var boosted = (u.role=="cover" or (u.weapon=="spear" and (tactic=="medicine_advance" or has(u,"edge")))) and use_skill(u,use)
-				if boosted:
-					var combined = (use=="cover" and tactic=="shield_cover") or (use=="pierce" and tactic=="medicine_advance")
-					events.append(tactic_name() if combined else SKILL_INFO[use][0])
+			var attack_range = max_range(u)
+			if u.p.distance_to(foe.p)>=max_range(u,true) or not u.attack.is_empty(): return
+			var use = "cover" if u.weapon=="bow" else "pierce"
+			var boosted = (u.role=="cover" or (u.weapon=="spear" and (tactic=="medicine_advance" or has(u,"edge") or u.promotion>0))) and use_skill(u,use)
+			if boosted:
+				var combined = (use=="cover" and tactic=="shield_cover") or (use=="pierce" and tactic=="medicine_advance")
+				events.append(tactic_name() if combined else SKILL_INFO[use][0])
+			if boosted or u.p.distance_to(foe.p)<attack_range:
 				attack(u,foe.p,boosted)
 		_:
 			toward(u,behind+Vector2(24*(team.find(u)-1),15),speed,19)
@@ -810,7 +834,7 @@ func finish_battle(won: bool) -> void:
 		return
 	completed.append([chapter,selected_route,field_rule])
 	last_result = ["삼진 관문을 확보했습니다.","팽성에서 패했지만 들것 두 곳을 수습하고 철수했습니다.","성고에 수레가 도착했습니다.","해하의 돌파를 마쳤습니다."][chapter]
-	supply = mini(9,supply+1)
+	supply = mini(SUPPLY_CAP,supply+1)
 	if chapter==3:
 		phase = "ending"
 		remember("ending")
@@ -839,11 +863,35 @@ func offer_for(id: String) -> void:
 		item = pool.pop_at(rng.randi_range(0,pool.size()-1))
 		offerings.append(item)
 
+func promotion_level(id: String) -> int:
+	return promotions.get(id,0)
+
+func duplicate_supply_gain() -> int:
+	return clampi(SUPPLY_CAP-supply,0,DUPLICATE_SUPPLY)
+
+func first_free_recruit() -> bool:
+	return chapter==0 and draft_plan=="balance" and DRAFT.any(func(id):
+		return id not in hero_keys and (id!="xiang" or mode=="fiction"))
+
 func draft_weights() -> Array:
 	var results: Array = ODDS[draft_plan].duplicate()
 	if mode=="history":
 		results[3] += results[4]
 		results[4] = 0
+	if first_free_recruit():
+		var eligible: Array[int] = []
+		var removed := 0
+		for i in results.size():
+			if results[i]==0: continue
+			if DRAFT[i] in hero_keys:
+				removed += results[i]
+				results[i] = 0
+			else:
+				eligible.append(i)
+		@warning_ignore("integer_division")
+		var share = removed/eligible.size()
+		for i in eligible.size():
+			results[eligible[i]] += share + (1 if i<removed%eligible.size() else 0)
 	return results
 
 func change_plan(id: String) -> bool:
@@ -868,16 +916,19 @@ func roll() -> bool:
 		if remaining>0: continue
 		var id = DRAFT[i]
 		draft_candidate = id
-		draft_result = "%d면 · %s %s" % [face,HEROES[id][0],"중복이면 보급 +1" if id in hero_keys else "합류 예정"]
+		draft_result = "%d면 · %s" % [face,HEROES[id][0]]
 		break
 	draft_done = true
 	return true
 
-func accept_candidate() -> void:
+func accept_candidate(resolution: String) -> void:
 	if draft_candidate.is_empty():
 		return
 	if draft_candidate in hero_keys:
-		supply = mini(9,supply+1)
+		if resolution=="promote":
+			promotions[draft_candidate] = promotion_level(draft_candidate)+1
+		else:
+			supply += duplicate_supply_gain()
 	else:
 		hero_keys.append(draft_candidate)
 		names_upgrades[draft_candidate] = []
@@ -897,11 +948,16 @@ func redraw_reward() -> bool:
 	draft_candidate = ""
 	return true
 
-func advance(perk: String) -> bool:
+func advance(perk: String, resolution := "") -> bool:
 	if phase!="camp" or not offerings.any(func(option): return option.id==perk):
 		return false
+	if draft_candidate in hero_keys:
+		if resolution!="supply" and (resolution!="promote" or promotion_level(draft_candidate)>=PROMOTION_CAP):
+			return false
+	elif not resolution.is_empty():
+		return false
 	names_upgrades[offered_to].append(perk)
-	accept_candidate()
+	accept_candidate(resolution)
 	chapter += 1
 	phase = "map"
 	selected_route = -1
@@ -911,7 +967,7 @@ func checkpoint() -> Dictionary:
 	var status = phase if phase!="battle" else "travel"
 	return {"version":SAVE_VERSION,"phase":status,"seed":seed_value,"mode":mode,"chapter":chapter,
 		"supply":supply,"route":selected_route,"board_seed":battle_seed,"field":field_rule,
-		"heroes":hero_keys.duplicate(),"perks":names_upgrades.duplicate(true),"completed":completed.duplicate(true),
+		"heroes":hero_keys.duplicate(),"perks":names_upgrades.duplicate(true),"promotions":promotions.duplicate(),"completed":completed.duplicate(true),
 		"streams":[field_rng.state,reward_rng.state,draft_rng.state,combat_rng.state],
 		"combat_start":combat_start_state,"rescue_order":rescue_order.duplicate(),
 		"reward_nonce":reward_nonce,"draft_plan":draft_plan,"rolled":draft_done,"redrawn":rerolled,
@@ -922,21 +978,29 @@ func restore(data: Dictionary) -> bool:
 		return false
 	if not data.get("mode","") in ["history","fiction"] or data.get("chapter",-1)<0 or data.get("chapter",99)>3:
 		return false
-	if data.streams.size()!=4:
+	if not data.has_all(["seed","supply","route","board_seed","field","heroes","perks","completed","reward_nonce","combat_start"]):
+		return false
+	if not data.get("streams") is Array or data.streams.size()!=4:
 		return false
 	new_run(data.seed,data.mode)
 	phase = data.phase
 	chapter = data.chapter
-	supply = data.supply
+	supply = clampi(data.supply,0,SUPPLY_CAP)
 	selected_route = data.route
 	battle_seed = data.board_seed
 	field_rule = data.field
 	board_mask = {"fog":field_rule=="안개","mud":field_rule=="진흙","ridge":field_rule=="고지"}
-	hero_keys = data.heroes
-	names_upgrades = data.perks
+	hero_keys = data.heroes.duplicate()
+	names_upgrades = data.perks.duplicate(true)
+	var saved_promotions = data.get("promotions",{})
+	if saved_promotions is Dictionary:
+		for id in DRAFT:
+			var level = saved_promotions.get(id,0)
+			if id in hero_keys and level is int and level>0:
+				promotions[id] = mini(level,PROMOTION_CAP)
 	player_skill = data.get("player_skill","command")
 	if player_skill not in player_skills(): player_skill = "command"
-	completed = data.completed
+	completed = data.completed.duplicate(true)
 	rescue_order.assign(data.get("rescue_order",[]))
 	reward_nonce = data.reward_nonce
 	combat_start_state = data.combat_start
@@ -944,13 +1008,20 @@ func restore(data: Dictionary) -> bool:
 		[field_rng,reward_rng,draft_rng,combat_rng][i].state = data.streams[i]
 	if phase=="travel":
 		combat_rng.state = combat_start_state
-	draft_plan = data.draft_plan
-	draft_done = data.rolled
-	rerolled = data.redrawn
-	draft_candidate = data.draft_candidate
-	draft_result = data.draft_result
-	last_result = data.result
+	var plan = data.get("draft_plan","balance")
+	draft_plan = plan if ODDS.has(plan) else "balance"
+	rerolled = data.get("redrawn",false)==true
+	var candidate = data.get("draft_candidate","")
+	var result = data.get("draft_result","")
+	draft_result = result if result is String else ""
+	draft_done = data.get("rolled",false)==true or not draft_result.is_empty() or candidate!=""
 	if phase=="camp":
-		offer_for(data.recipient)
+		var face_text = draft_result.get_slice("면",0)
+		if "면" in draft_result and face_text.is_valid_int() and face_text.to_int() in range(1,19) and candidate in DRAFT and (candidate!="xiang" or mode=="fiction"):
+			if draft_result.contains(HEROES[candidate][0]):
+				draft_candidate = candidate
+		var recipient = data.get("recipient","liu")
+		offer_for(recipient if recipient in hero_keys else "liu")
+	last_result = data.get("result","")
 	refresh_tactic()
 	return true
