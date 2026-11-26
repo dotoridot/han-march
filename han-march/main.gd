@@ -386,7 +386,7 @@ func map_view() -> void:
 		if "last_stand" in orders and game.supply+path[3]==0:
 			words(choice,"배수진 적용 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
 	if not game.ration_hero.is_empty():
-		words(screen_body,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 피로 최대 -10" % Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
+		words(screen_body,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" % Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
 	map_prompt = words(screen_body,"",14,PAPER,true)
 	map_prompt_index = -2
 	refresh_map_prompt(mounted_map.nearby)
@@ -471,6 +471,19 @@ func refresh_battle() -> void:
 
 func camp_view() -> void:
 	words(screen_body,game.last_result,25,GOLD)
+	var reward_notes = {}
+	if game.golden_refund():
+		var id: String = game.draft_candidate
+		var resolutions = ["promote","supply"] if id in game.hero_keys else [""]
+		for resolution in resolutions:
+			var projected: Dictionary = game.project_candidate(id,resolution)
+			if projected.is_empty():
+				continue
+			var choice: String = {"promote":"승급","supply":"보급 전환","":"합류"}[resolution]
+			reward_notes[resolution] = "%s 시 보급 %d → %d / 전환 +%d / 황금 눈 +%d (상한 %d)" % [
+				choice,game.supply,projected.supply_after,projected.gain,projected.refund,Campaign.SUPPLY_CAP]
+		var lines = [reward_notes[draft_resolution]] if reward_notes.has(draft_resolution) else reward_notes.values()
+		words(screen_body,"\n".join(lines),14,GOLD,true)
 	var columns = row(screen_body,12)
 	columns.size_flags_vertical = SIZE_EXPAND_FILL
 	var scroll = ScrollContainer.new()
@@ -548,16 +561,19 @@ func camp_view() -> void:
 			promote.disabled = capped
 			var stores = action(rewards,"보급 +%d%s" % [gain," ✓" if draft_resolution=="supply" else ""],
 				choose_draft_resolution.bind("supply"))
+			promote.accessibility_description = reward_notes.get("promote","")
+			stores.accessibility_description = reward_notes.get("supply","")
 			if draft_resolution.is_empty(): primary_button = stores if promote.disabled else promote
 			words(sheet,"승급 단계마다 %s. 승급 상한 %d단계 / 보급 상한 %d, 전환 시 최대 +%d" % [
 				Campaign.PROMOTION[id][0],Campaign.PROMOTION_CAP,Campaign.SUPPLY_CAP,Campaign.DUPLICATE_SUPPLY],15,SUBTLE,true)
 		else:
 			words(sheet,"%d면 / %s 합류 예정" % [number,Campaign.HEROES[id][0]],17,GOLD,true)
 			words(sheet,draft_tactic_line(id,"","합류",current),15,PAPER,true)
-		if game.golden_refund():
-			words(sheet,"황금 눈 / 후보 확정 시 보급 +1, 전환 포함 상한 9. 후보를 버리면 이 눈의 환급도 사라집니다.",15,GOLD,true)
 		var again = action(sheet,"후보 버리고 다시 굴리기 / 보급 2",perform_redraw)
 		again.disabled = game.rerolled or game.supply<2
+		if not reward_notes.is_empty():
+			again.tooltip_text = "후보를 버리면 이 눈의 환급도 사라집니다."
+			again.accessibility_description = again.tooltip_text
 	words(sheet,"주 진법은 방패 엄호 > 약낭 돌파, 보조 진법은 왕의 신호 > 방패와 장창 순으로 각각 하나까지 적용됩니다.",14,SUBTLE,true)
 	words(sheet,"유방과 한신은 한신 1단계부터 왕의 신호가 열립니다. 번쾌와 조참은 합류 즉시 방패와 장창을 쓰며, 조참의 승급과 한신의 2단계 이후 승급마다 해당 피해 증가량이 10%p 오릅니다.",14,SUBTLE,true)
 	var choices = flow(sheet)
@@ -582,7 +598,7 @@ func camp_view() -> void:
 	if game.draft_done:
 		words(sheet,"강화를 고르면 등용 보상을 확정하고 출발합니다.",15,SUBTLE,true)
 		if draft_resolution=="promote" and "ration_cycle" in game.names_upgrades["liu"]:
-			words(sheet,"군량 순환 / 승급 확정 시 다음 전투에서 최대 및 시작 MP +4, 첫 공격 피로 최대 -10",15,GOLD,true)
+			words(sheet,"군량 순환 / 승급 확정 시 다음 전투에서 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10",15,GOLD,true)
 		if not game.draft_candidate.is_empty() and (game.draft_candidate not in game.hero_keys or not draft_resolution.is_empty()):
 			var projected: Dictionary = game.project_candidate(game.draft_candidate,draft_resolution)
 			words(sheet,"출발 후 진법: "+game.tactic_effects(projected.tactics),15,GOLD,true)
@@ -594,6 +610,7 @@ func camp_view() -> void:
 		var b = action(upgrade,"%s / %s" % [perk.name,perk.tag],choose_perk.bind(perk.id))
 		words(upgrade,perk.text,14,SUBTLE,true)
 		b.disabled = needs_resolution
+		b.accessibility_description = reward_notes.get(draft_resolution,"")
 		if primary_button==null and not needs_resolution: primary_button = b
 
 func draft_tactic_line(id: String, resolution: String, label: String, current: String) -> String:

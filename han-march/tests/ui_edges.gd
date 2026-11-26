@@ -1,5 +1,6 @@
 extends SceneTree
 
+const Campaign = preload("res://campaign.gd")
 const Scene = preload("res://main.tscn")
 const Pilot = preload("res://tests/pilot.gd")
 var ui
@@ -114,27 +115,72 @@ func order_edges() -> void:
 		if rng.randi_range(1,18)==18:
 			camp.streams[2] = state
 			break
-	ui.game.restore(camp)
-	ui.show_phase()
-	var streams: Array = ui.game.checkpoint().streams
-	await snap("orders-unrolled")
-	if ui.game.checkpoint().streams!=streams:
+	for example in [[3,"promote",3], [9,"supply",9], [9,"promote",9]]:
+		camp.supply = example[0]
+		ui.game.restore(camp)
+		ui.show_phase()
+		var streams: Array = ui.game.checkpoint().streams
+		await snap("orders-unrolled")
+		if ui.game.checkpoint().streams!=streams:
+			status = 1
+		ui.change_odds("lance")
+		ui.perform_roll()
+		await snap("orders-golden-%d" % example[0])
+		var before: Dictionary = ui.game.checkpoint()
+		var rolled: int = example[0]-1
+		var promote = "승급 시 보급 %d → %d / 전환 +0 / 황금 눈 +1 (상한 9)" % [rolled,rolled+1]
+		var conversion: int = mini(2,9-rolled)
+		var supply = "보급 전환 시 보급 %d → %d / 전환 +%d / 황금 눈 +%d (상한 9)" % [
+			rolled,mini(9,rolled+conversion+1),conversion,int(rolled+conversion<9)]
+		if not "눈 18 / 18" in camp_labels() or not "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in camp_labels():
+			push_error("Camp labels omit the final face or the first-healing effect")
+			status = 1
+		if directory and example[0]==3:
+			DirAccess.copy_absolute(ui.store_path,directory.path_join("camp.cfg"))
+		check_reward_view(promote, "승급")
+		if not supply in camp_labels():
+			push_error("Both choices must show their separate supply outcomes before selection")
+			status = 1
+		confirm_with_enter()
+		await snap("orders-promotion-%d" % example[0])
+		check_reward_view(promote,"강화")
+		if example[0]==9:
+			ui.choose_draft_resolution("supply")
+			await snap("orders-cap-conversion")
+			check_reward_view(supply,"강화")
+			if example[1]=="promote":
+				ui.choose_draft_resolution("promote")
+				await snap("orders-cap-promotion")
+				check_reward_view(promote,"강화")
+		if ui.game.checkpoint()!=before or ui.game.supply!=rolled:
+			push_error("Preview changed the rolled checkpoint")
+			status = 1
+		confirm_with_enter()
+		await snap("orders-map-%d-%s" % [example[0],example[1]])
+		var saved = ConfigFile.new()
+		var saved_ok = saved.load(ui.store_path)==OK
+		var state: Dictionary = saved.get_value("checkpoint","state",{}) if saved_ok else {}
+		var promoted: bool = example[1]=="promote"
+		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted) or ("조참 최대 및 시작 MP +4" in camp_labels())!=promoted:
+			push_error("Saved supply, rank or RNG differs from the forecast")
+			status = 1
+	await ration_heal(camp)
+	print("Orders UI ",root.size," / text scale ",ui.text_zoom," / result ",status)
+
+func check_reward_view(note: String, stage: String) -> void:
+	var focus: Control = root.gui_get_focus_owner()
+	var bounds = Rect2()
+	for label in ui.screen_body.find_children("*","Label",true,false):
+		if note in label.text and label.get_parent()==ui.screen_body:
+			bounds = label.get_global_rect()
+			break
+	var desc: String = focus.accessibility_description if focus!=null else ""
+	print(stage," ",note," / label ",bounds," / viewport ",root.get_visible_rect()," / AX ",desc)
+	if not bounds.has_area() or not root.get_visible_rect().encloses(bounds) or focus==null or focus!=ui.primary_button or not root.get_visible_rect().encloses(focus.get_global_rect()) or desc!=note:
+		push_error("Refund summary and accessible description are required at the focused decision")
 		status = 1
-	ui.change_odds("lance")
-	ui.perform_roll()
-	await snap("orders-golden")
-	var labels = camp_labels()
-	if not "후보 확정 시 보급 +1" in labels or not "눈 18 / 18" in labels or not "첫 공격의 피로 증가량 최대 10 감소" in labels:
-		push_error("Order labels omit conditions, the final face, or the numeric effect")
-		status = 1
-	if directory:
-		DirAccess.copy_absolute(ui.store_path,directory.path_join("camp.cfg"))
-	ui.choose_draft_resolution("promote")
-	await snap("orders-promotion")
-	var confirm: Button = ui.primary_button
-	if not root.get_visible_rect().encloses(confirm.get_global_rect()) or not confirm.has_focus():
-		push_error("Orders confirmation is out of the viewport or lost keyboard focus")
-		status = 1
+
+func confirm_with_enter() -> void:
 	var key = InputEventKey.new()
 	key.keycode = KEY_ENTER
 	key.pressed = true
@@ -142,11 +188,43 @@ func order_edges() -> void:
 	key = key.duplicate()
 	key.pressed = false
 	root.push_input(key)
-	await snap("orders-map")
-	if ui.game.phase!="map" or ui.game.promotion_level("cao")!=1 or not "조참 최대 및 시작 MP +4" in camp_labels() or ui.game.supply!=3:
-		push_error("The confirmation did not show the queued ration and one refund")
+
+func ration_heal(camp: Dictionary) -> void:
+	var fixture = camp.duplicate(true)
+	fixture.rolled = true
+	fixture.draft_candidate = "xiao"
+	fixture.draft_result = "6면 · 소하"
+	fixture.perks.xiao.append("reserve")
+	ui.game.restore(fixture)
+	ui.show_phase()
+	ui.choose_draft_resolution("promote")
+	await snap("orders-heal-preview")
+	if not "첫 공격 또는 응급 처치 시 피로 최대 -10" in camp_labels():
 		status = 1
-	print("Orders UI ",root.size," / text scale ",ui.text_zoom," / result ",status)
+	confirm_with_enter()
+	await snap("orders-heal-map")
+	if not "소하 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" in camp_labels():
+		status = 1
+	ui.choose_route(0)
+	ui.complete_travel()
+	var game = ui.game
+	var player: Dictionary = game.team[0]
+	var medic: Dictionary = game.team[2]
+	var ready: bool = medic.mp==36.0 and medic.max_mp==36.0 and medic.get("ration_credit",0)==10
+	game.clear_battle()
+	game.team.append_array([player,medic])
+	game.barrier.clear()
+	player.p = Vector2(200,200)
+	player.hp = 40.0
+	medic.p = Vector2(200,205)
+	for frame in 100:
+		game.step(Vector2.ZERO,Vector2.RIGHT,false,false,false,false)
+		if game.events.has("응급 처치"):
+			break
+	if not ready or player.hp!=61.0 or medic.fatigue!=0.0 or medic.has("ration_credit"):
+		push_error("Xiao's first heal must spend the ration and keep its usual healing amount")
+		status = 1
+	print("Ration heal / ",ready," / HP ",player.hp," / fatigue ",medic.fatigue," / credit ",medic.get("ration_credit",0))
 
 func verify() -> void:
 	directory = OS.get_environment("HAN_MARCH_CAPTURE")

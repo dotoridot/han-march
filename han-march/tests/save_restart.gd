@@ -224,15 +224,92 @@ func order_counter(game) -> bool:
 		clone.state = game.combat_rng.state
 		var damage: float = (25+clone.randi_range(-1,1))*(1.55 if boosted else 1.0)
 		var hp: float = foe.hp
-		for frame in attack.impact-1:
+		for frame in attack.impact-2:
 			game.tick(Campaign.STEP,Vector2.ZERO,foe.p,false,false,false,false)
-		game.contact(player)
+		if not order_expect(foe.hp==hp,"Counter fixture takes no damage before contact: "+scenario):
+			return false
+		game.tick(Campaign.STEP,Vector2.ZERO,foe.p,false,false,false,false)
 		if not order_expect(is_equal_approx(hp-foe.hp,damage) and attack.hit.size()==1,"Counter contact %s: damage %.2f, expected %.2f, targets %d" % [scenario,hp-foe.hp,damage,attack.hit.size()]):
 			return false
 		for frame in 22:
 			game.tick(Campaign.STEP,Vector2.ZERO,foe.p,false,false,false,false)
 		game.tick(Campaign.STEP,Vector2.ZERO,foe.p,true,false,false,false)
 		if not order_expect(not player.attack.is_empty() and not player.attack.special,"Spent/expired counter does not buff the following attack: "+scenario):
+			return false
+	return true
+
+func order_arrow_boundary(app, departure: Dictionary) -> bool:
+	var game = app.game
+	var fixture = departure.duplicate(true)
+	fixture.perks.liu = ["ambush_counter"]
+	for offset in [60,61]:
+		game.restore(fixture)
+		app.complete_travel()
+		game.clear_battle()
+		game.barrier.clear()
+		var player: Dictionary = game.make_actor("liu",Vector2(21,200))
+		var archer: Dictionary = game.make_actor("archer",Vector2(72,200),true)
+		game.team.append(player)
+		game.foes.append(archer)
+		# Supply the projection used by mouse input when the headless canvas has not drawn.
+		if app.landscape.box.size.x==0:
+			app.landscape.box = Rect2(Vector2.ZERO,Campaign.WORLD)
+		for frame in 45:
+			app.combat_input(Campaign.STEP)
+			if not game.strikes.is_empty():
+				break
+		if not order_expect(game.strikes.size()==1 and game.strikes[0].actor==archer,"Enemy AI releases a real projectile"):
+			return false
+		var arrow_id: int = game.strikes[0].attack_id
+		var health: float = player.hp
+		player.face = Vector2.LEFT
+		var dodge = InputEventKey.new()
+		dodge.physical_keycode = KEY_SPACE
+		dodge.pressed = true
+		root.push_input(dodge)
+		for frame in Campaign.DODGE_STEPS:
+			app.combat_input(Campaign.STEP)
+			if game.traces.any(func(trace): return trace.kind=="evade" and trace.attack_id==arrow_id):
+				break
+		if not order_expect(game.strikes.is_empty() and player.hp==health and game.traces.any(func(trace): return trace.kind=="evade" and trace.attack_id==arrow_id and trace.weapon=="bow"),"Space evades contact from that enemy arrow with no health loss"):
+			return false
+		var evaded_at: int = game.step_number
+		game.cancel(archer)
+		game.foes.clear()
+		for frame in offset-1:
+			app.combat_input(Campaign.STEP)
+		var first: Dictionary = game.make_actor("guard",player.p+Vector2(23,0),true)
+		var second: Dictionary = game.make_actor("pursuer",player.p+Vector2(23,8),true)
+		first.hp = 500.0
+		second.hp = 500.0
+		game.foes.append_array([first,second])
+		var rng = RandomNumberGenerator.new()
+		rng.state = game.combat_rng.state
+		var expected = (25+rng.randi_range(-1,1))*(1.55 if offset==60 else 1.0)
+		var hit = InputEventMouseButton.new()
+		hit.position = app.landscape.get_global_rect().position+app.landscape.to_screen(first.p)
+		hit.button_index = MOUSE_BUTTON_LEFT
+		hit.pressed = true
+		root.push_input(hit)
+		hit = hit.duplicate()
+		hit.pressed = false
+		root.push_input(hit)
+		app.combat_input(Campaign.STEP)
+		var attack: Dictionary = player.attack
+		if not order_expect(not attack.is_empty() and game.step_number-evaded_at==offset,"Mouse attack enters on the requested offset"):
+			return false
+		for frame in attack.impact-2:
+			app.combat_input(Campaign.STEP)
+		if not order_expect(first.hp==500.0 and second.hp==500.0 and attack.hit.is_empty(),"Both targets take zero damage before the contact tick"):
+			return false
+		app.combat_input(Campaign.STEP)
+		var losses = [500.0-first.hp,500.0-second.hp]
+		var special: bool = attack.special
+		var ids: Array = attack.hit.keys()
+		app.combat_input(Campaign.STEP)
+		var repeat = [500.0-first.hp,500.0-second.hp]!=losses
+		print("Arrow counter +",offset," ticks / damage ",losses," / targets ",ids.size()," / additional damage ",repeat)
+		if not order_expect(special==(offset==60) and losses.all(func(loss): return is_equal_approx(loss,expected)) and ids.size()==2 and first.uid in ids and second.uid in ids and not repeat,"Only +60 boosts both once, +61 uses normal damage and next tick has no extra damage"):
 			return false
 	return true
 
@@ -430,6 +507,8 @@ func order_restart(app, mode: String) -> bool:
 		return order_counter(game)
 	if mode=="orders-bow":
 		return order_bow(game,departure)
+	if mode=="orders-arrow":
+		return order_arrow_boundary(app,departure)
 	var old = departure.duplicate(true)
 	old.erase("ration_hero")
 	var default_game = Campaign.new()
@@ -500,7 +579,7 @@ func verify() -> void:
 	app.set_process(false)
 	var game = app.game
 	var mode = OS.get_environment("HAN_MARCH_SAVE_TEST")
-	if mode in ["orders-write","orders-read","orders-bow","orders-counter","golden-write","golden-read"]:
+	if mode in ["orders-write","orders-read","orders-bow","orders-counter","orders-arrow","golden-write","golden-read"]:
 		var passed = golden_restart(app,mode) if mode.begins_with("golden") else order_restart(app,mode)
 		app.queue_free()
 		await process_frame

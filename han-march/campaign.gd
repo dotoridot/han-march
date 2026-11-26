@@ -1015,7 +1015,9 @@ func project_candidate(candidate: String, resolution: String) -> Dictionary:
 		return {}
 	elif not candidate.is_empty():
 		heroes.append(candidate)
-	return {"heroes":heroes,"promotions":ranks,"gain":gain,"tactics":resolve_tactics(heroes,ranks)}
+	var refund := 1 if candidate==draft_candidate and golden_refund() and supply+gain<SUPPLY_CAP else 0
+	return {"heroes":heroes,"promotions":ranks,"gain":gain,"refund":refund,"supply_after":supply+gain+refund,
+		"tactics":resolve_tactics(heroes,ranks)}
 
 func accept_candidate(projected: Dictionary) -> void:
 	if not draft_candidate.is_empty() and draft_candidate not in hero_keys:
@@ -1023,7 +1025,7 @@ func accept_candidate(projected: Dictionary) -> void:
 		if draft_candidate=="xiang": remember("fantasy")
 	hero_keys = projected.heroes
 	promotions = projected.promotions
-	supply += projected.gain
+	supply = projected.supply_after
 	tactics = projected.tactics
 	draft_candidate = ""
 
@@ -1045,14 +1047,11 @@ func advance(perk: String, resolution := "") -> bool:
 	var projected := project_candidate(draft_candidate,resolution)
 	if projected.is_empty():
 		return false
-	var refund = golden_refund()
 	var recipient = "liu" if offerings[option_index].tag=="군령" else offered_to
 	names_upgrades[recipient].append(perk)
 	if resolution=="promote" and "ration_cycle" in names_upgrades["liu"]:
 		ration_hero = draft_candidate
 	accept_candidate(projected)
-	if refund:
-		supply = mini(SUPPLY_CAP,supply+1)
 	chapter += 1
 	phase = "map"
 	selected_route = -1
