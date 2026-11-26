@@ -18,7 +18,7 @@
 
 ```sh
 profile=$(mktemp -d)
-export HAN_MARCH_PROFILE="$profile" HAN_MARCH_MUTE=1
+export HAN_MARCH_PROFILE="$profile" HAN_MARCH_TEST_SAVE="$profile/roundtrip-check.cfg" HAN_MARCH_MUTE=1
 "$GODOT" --headless --audio-driver Dummy --path han-march --editor --import --quit
 "$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/campaign_check.gd
 ```

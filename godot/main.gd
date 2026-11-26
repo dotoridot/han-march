@@ -416,6 +416,11 @@ func _input(event: InputEvent) -> void:
 		var active_focus = get_viewport().gui_get_focus_owner()
 		if active_focus is Button and active_focus.has_meta("focus_line"):
 			active_focus.get_meta("focus_line").hide()
+		if event.button_index == MOUSE_BUTTON_LEFT and view in ["pause","journal"] and not sheet.get_global_rect().has_point(event.position):
+			click_attack = false
+			get_viewport().set_input_as_handled()
+			back_from_overlay()
+			return
 		click_attack = event.button_index == MOUSE_BUTTON_LEFT and view.is_empty() and picture.get_global_rect().has_point(mouse_here)
 	elif event is InputEventKey and event.pressed:
 		interactive_input = false
