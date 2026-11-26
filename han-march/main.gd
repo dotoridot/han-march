@@ -366,6 +366,7 @@ func start_run(mode: String) -> void:
 
 func map_view() -> void:
 	var data = game.entry()
+	var orders: Array = game.names_upgrades["liu"]
 	var headline = row(screen_body)
 	words(headline,"%s  /  %s" % [data.year,data.name],23,GOLD)
 	headline.add_spacer(false)
@@ -382,6 +383,10 @@ func map_view() -> void:
 		words(choice,"%s  /  %s" % [path[1],path[2]],14,SUBTLE)
 		var forecast = game.preview_route(i)
 		words(choice,"%s · 적 %d명%s" % [forecast.weather,forecast.opponents,"(추격대 별도)" if game.chapter==1 else ""],14,GOLD,true)
+		if "last_stand" in orders and game.supply+path[3]==0:
+			words(choice,"배수진 적용 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
+	if not game.ration_hero.is_empty():
+		words(screen_body,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 피로 최대 -10" % Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
 	map_prompt = words(screen_body,"",14,PAPER,true)
 	map_prompt_index = -2
 	refresh_map_prompt(mounted_map.nearby)
@@ -436,6 +441,10 @@ func refresh_battle() -> void:
 	var status = ["관문 주변의 적을 먼저 정리하세요.", "구출 %d/2  ·  추격대 %d/4" % [game.rescued,game.patrol], "수레 HP %d  ·  성고까지 %d%%" % [maxi(0,roundi(game.wagon_hp)),roundi((game.wagon.x-112)/444*100)], "방책 %d/2  ·  %s" % [game.gates,"적장 항우" if game.mode=="history" else "가상 지휘관"]][game.chapter]
 	var evasion = "회피 준비" if game.dodge_cd<=0 else "회피 %.1f초" % game.dodge_cd
 	action_status.text = "%s   /   %s   /   %s" % [status,evasion,game.tactic_name()]
+	if game.last_stand:
+		action_status.text += " / 배수진"
+	if game.counter_until>0 and game.counter_until>=game.step_number:
+		action_status.text += " / 기습 반격 %.1f초" % ((game.counter_until-game.step_number+1)*Campaign.STEP)
 	trail_status.text = "예고가 보이면 좌우로 움직이며 Space 또는 Shift를 누르세요." if game.training_ticks>0 else (last_message if last_message_left>0 else game.entry().description)
 	var field_note: String = scene_variant_text.get(game.field_rule,"") if game.scout_bonus.is_empty() else game.scout_bonus
 	var allies = game.alive(game.team)
@@ -477,6 +486,10 @@ func camp_view() -> void:
 	words(sheet,"야영지 / 보급 %d / %s" % [game.supply,"역사 행군" if game.mode=="history" else "가상 행군"],20,PAPER,true)
 	var current: String = game.tactic_effects(game.tactics)
 	words(sheet,"현재 진법: "+current,16,GOLD,true)
+	var orders = Campaign.PLAN.perks.filter(func(perk):
+		return perk.tag=="군령" and perk.id in game.names_upgrades["liu"])
+	for order in orders:
+		words(sheet,"%s / %s" % [order.name,order.text],14,SUBTLE,true)
 	if game.chapter==1:
 		note_dialogue(sheet,"rescued")
 	if not game.draft_done:
@@ -541,6 +554,8 @@ func camp_view() -> void:
 		else:
 			words(sheet,"%d면 / %s 합류 예정" % [number,Campaign.HEROES[id][0]],17,GOLD,true)
 			words(sheet,draft_tactic_line(id,"","합류",current),15,PAPER,true)
+		if game.golden_refund():
+			words(sheet,"황금 눈 / 후보 확정 시 보급 +1, 전환 포함 상한 9. 후보를 버리면 이 눈의 환급도 사라집니다.",15,GOLD,true)
 		var again = action(sheet,"후보 버리고 다시 굴리기 / 보급 2",perform_redraw)
 		again.disabled = game.rerolled or game.supply<2
 	words(sheet,"주 진법은 방패 엄호 > 약낭 돌파, 보조 진법은 왕의 신호 > 방패와 장창 순으로 각각 하나까지 적용됩니다.",14,SUBTLE,true)
@@ -550,13 +565,13 @@ func camp_view() -> void:
 		var marks: Array = game.names_upgrades[id]
 		var title: String = Campaign.HEROES[id][0] + " · " + Campaign.HEROES[id][2]
 		var candidate = action(choices,title + (" ✓" if id==game.offered_to else ""),focus_candidate.bind(id))
-		candidate.tooltip_text = "고른 강화 %d개" % marks.size()
+		candidate.tooltip_text = "고른 강화 %d개" % (marks.size()-(orders.size() if id=="liu" else 0))
 		if Campaign.PROMOTION.has(id):
 			candidate.tooltip_text += " / 승급 %d/%d" % [game.promotion_level(id),Campaign.PROMOTION_CAP]
 	var active = game.names_upgrades[game.offered_to]
 	var names: Array[String] = []
 	for perk in Campaign.PLAN.perks:
-		if perk.id in active: names.append(perk.name)
+		if perk.tag!="군령" and perk.id in active: names.append(perk.name)
 	words(sheet,"%s의 강화 %s" % [Campaign.HEROES[game.offered_to][0],", ".join(names) if not names.is_empty() else "없음"],15,SUBTLE,true)
 	var role_skill: String = {"fan":"shield","xiao":"heal","han":"cover","xiang":"pierce","cao":"pierce"}.get(game.offered_to,"command")
 	var sheet_skills: Array = game.player_skills() if game.offered_to=="liu" else [role_skill]
@@ -566,6 +581,8 @@ func camp_view() -> void:
 		words(sheet,"%s / %s / MP %d, 재사용 %.1f초" % [info[0],info[1],price[0],price[1]],14,SUBTLE,true)
 	if game.draft_done:
 		words(sheet,"강화를 고르면 등용 보상을 확정하고 출발합니다.",15,SUBTLE,true)
+		if draft_resolution=="promote" and "ration_cycle" in game.names_upgrades["liu"]:
+			words(sheet,"군량 순환 / 승급 확정 시 다음 전투에서 최대 및 시작 MP +4, 첫 공격 피로 최대 -10",15,GOLD,true)
 		if not game.draft_candidate.is_empty() and (game.draft_candidate not in game.hero_keys or not draft_resolution.is_empty()):
 			var projected: Dictionary = game.project_candidate(game.draft_candidate,draft_resolution)
 			words(sheet,"출발 후 진법: "+game.tactic_effects(projected.tactics),15,GOLD,true)
