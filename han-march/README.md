@@ -18,9 +18,19 @@
 
 ```sh
 profile=$(mktemp -d)
-export HAN_MARCH_PROFILE="$profile" HAN_MARCH_MUTE=1
+export HAN_MARCH_PROFILE="$profile" HAN_MARCH_TEST_SAVE="$profile/roundtrip-check.cfg" HAN_MARCH_MUTE=1
 "$GODOT" --headless --audio-driver Dummy --path han-march --editor --import --quit
 "$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/campaign_check.gd
+```
+
+### 기마 지도, 접촉과 회피 검사
+
+위 설정으로 import를 마친 뒤 같은 셸에서 실행합니다.
+
+```sh
+HAN_MARCH_PROFILE="$(mktemp -d)" "$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/relief_check.gd
+HAN_MARCH_PROFILE="$(mktemp -d)" "$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/contact_feedback.gd
+"$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/dodge_window.gd
 ```
 
 [공개 범위와 제3자 고지](../RIGHTS.md)
