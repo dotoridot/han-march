@@ -8,6 +8,8 @@ const FONT = preload("res://assets/NotoSansKR.ttf")
 const PAPER = Color("f4e6c8")
 const SUBTLE = Color("c6b598")
 const GOLD = Color("e3ad5e")
+const RECRUIT_GREEN = Color("86d8ab")
+const PROMOTION_BLUE = Color("9acaff")
 const NIGHT = Color("181310")
 const PANEL = Color("2a201a")
 const PRIMARY = Color("914420")
@@ -25,7 +27,7 @@ var dice_view: FeatureModel
 var map_prompt: Label
 var map_prompt_index := -2
 var skill_status: Label
-var presented_roll := ""
+var confirmed_draft: Dictionary = {}
 var draft_resolution := ""
 var march_at := Vector2(0,4.2)
 var marching := false
@@ -271,12 +273,14 @@ func note_dialogue(parent: Node, key: String) -> void:
 	if line_data!=null and is_instance_valid(label):
 		label.text = "%s  %s" % [line_data.character,line_data.text]
 
-func show_phase() -> void:
+func show_phase(reveal_draft := false) -> void:
 	var old_phase = announced_phase
 	empty(screen_body)
 	announced_phase = game.phase
 	if game.phase!="camp" or old_phase!="camp":
 		draft_resolution = ""
+	if game.phase!="map" or old_phase not in ["camp","map"]:
+		confirmed_draft.clear()
 	if game.phase=="battle" and old_phase!="battle":
 		inspected_ally = -1
 	screen_body.size_flags_vertical = SIZE_FILL
@@ -299,7 +303,7 @@ func show_phase() -> void:
 		"title":
 			title_view()
 		"map":
-			map_view()
+			map_view(reveal_draft)
 		"travel":
 			words(screen_body,"%s으로 이동 중" % game.entry().name,22,GOLD)
 			words(screen_body,"경유지 %s" % game.entry().routes[game.selected_route][0],15,SUBTLE)
@@ -307,7 +311,7 @@ func show_phase() -> void:
 		"battle":
 			battle_view()
 		"camp":
-			camp_view()
+			camp_view(reveal_draft)
 		"ending","lost":
 			result_view()
 	landscape.queue_redraw()
@@ -340,6 +344,7 @@ func toggle_intro() -> void:
 
 func continue_run() -> void:
 	if game.restore(checkpoint_data):
+		confirmed_draft.clear()
 		march_at = checkpoint_data.get("march_at",MountedMap.TRAILS[0][0])
 		travel_time = 0.0
 		travel_from = 0.0
@@ -359,18 +364,30 @@ func start_run(mode: String) -> void:
 		run_seed.grab_focus()
 		return
 	march_at = MountedMap.TRAILS[0][0]
-	presented_roll = ""
 	game.new_run(value.to_int() if value.is_valid_int() else randi_range(100000,99999999),mode)
 	show_phase()
 	save()
 
-func map_view() -> void:
+func map_view(reveal_draft: bool) -> void:
 	var data = game.entry()
 	var orders: Array = game.names_upgrades["liu"]
 	var headline = row(screen_body)
 	words(headline,"%s  /  %s" % [data.year,data.name],23,GOLD)
 	headline.add_spacer(false)
 	words(headline,"보급 %d   ·   시드 %d" % [game.supply,game.seed_value],15,SUBTLE)
+	if not confirmed_draft.is_empty():
+		var result = row(screen_body)
+		dice_view = FeatureModel.new()
+		dice_view.seal = false
+		dice_view.reduced = motion_reduced
+		dice_view.custom_minimum_size = Vector2(86,80)
+		result.add_child(dice_view)
+		dice_view.set_face(confirmed_draft.face,reveal_draft,confirmed_draft.color)
+		var details = column(result,2)
+		details.size_flags_horizontal = SIZE_EXPAND_FILL
+		details.alignment = BoxContainer.ALIGNMENT_CENTER
+		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,16,GOLD,true)
+		words(details,confirmed_draft.text,17,confirmed_draft.color,true)
 	note_dialogue(screen_body,data.id)
 	var choices = row(screen_body)
 	for i in data.routes.size():
@@ -469,8 +486,22 @@ func refresh_battle() -> void:
 		Campaign.SKILL_INFO[id][0],Campaign.SKILL_INFO[id][1],floori(player.mp),player.max_mp,cost,availability,
 		" / R 특기 전환" if game.player_skills().size()>1 else ""]
 
-func camp_view() -> void:
-	words(screen_body,game.last_result,25,GOLD)
+func camp_view(reveal_draft: bool) -> void:
+	words(screen_body,game.last_result,16,SUBTLE,true)
+	var next_chapter: int = game.chapter+1
+	var next: Dictionary = Campaign.PLAN.chapters[next_chapter]
+	words(screen_body,"다음 전장 / %s" % next.name,18,GOLD,true)
+	var threat: String = {
+		1:"시간이 지나면 추격병이 합류합니다.",
+		2:"수레가 전진하면 매복한 적이 나타납니다.",
+		3:"두 방책을 열기 전에는 지휘관에게 피해를 줄 수 없습니다.",
+	}[next_chapter]
+	words(screen_body,"%s %s" % [threat,next.description],14,PAPER,true)
+	var routes: Array = next.routes
+	var enemy_difference = "적 적음" if routes[0][4]<routes[1][4] else "적 많음"
+	var other_difference = "적 많음" if routes[0][4]<routes[1][4] else "적 적음"
+	words(screen_body,"경유지 선택 전 / %s (%s), %s (%s). 지형 효과는 선택에 따라 달라집니다." % [
+		routes[0][0],enemy_difference,routes[1][0],other_difference],14,SUBTLE,true)
 	var reward_notes = {}
 	if game.golden_refund():
 		var id: String = game.draft_candidate
@@ -489,7 +520,7 @@ func camp_view() -> void:
 	var scroll = ScrollContainer.new()
 	scroll.size_flags_horizontal = SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = SIZE_EXPAND_FILL
-	scroll.custom_minimum_size.y = 305
+	scroll.custom_minimum_size.y = 185
 	scroll.follow_focus = true
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	screen_body.size_flags_vertical = SIZE_EXPAND_FILL
@@ -517,10 +548,11 @@ func camp_view() -> void:
 	dice_view.custom_minimum_size = Vector2(155,160)
 	die_column.add_child(dice_view)
 	var number = game.draft_result.get_slice("면",0).to_int() if not game.draft_candidate.is_empty() else 0
-	dice_view.set_face(number,game.draft_result!=presented_roll and not motion_reduced)
-	presented_roll = game.draft_result
+	dice_view.set_face(number,reveal_draft)
 	var face_label = words(die_column,"눈 %d / 18" % number if number>0 else "18면 등용 주사위",15,GOLD)
 	face_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if number==18:
+		words(die_column,"18면 대길",16,GOLD).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if not game.draft_done:
 		var options = flow(sheet)
 		for option in [["balance","균형 / 무료"],["shield","방패 우대 / 보급 1"],["lance","장병기 우대 / 보급 1"]]:
@@ -551,7 +583,11 @@ func camp_view() -> void:
 			var level: int = game.promotion_level(id)
 			var gain: int = game.project_candidate(id,"supply").gain
 			var capped = level>=Campaign.PROMOTION_CAP
-			words(sheet,"%d면 / %s 중복 / 승급 %d/%d" % [number,Campaign.HEROES[id][0],level,Campaign.PROMOTION_CAP],17,GOLD,true)
+			words(sheet,"%d면 / %s 중복 / 현재 승급 %d/%d" % [number,Campaign.HEROES[id][0],level,Campaign.PROMOTION_CAP],17,GOLD,true)
+			if draft_resolution=="promote":
+				words(sheet,"%s 승급 예정 / %d단계" % [Campaign.HEROES[id][0],level+1],16,PROMOTION_BLUE,true)
+			elif draft_resolution=="supply":
+				words(sheet,"보급 +%d 전환 예정" % gain,16,PAPER,true)
 			if not capped:
 				words(sheet,draft_tactic_line(id,"promote","승급",current),15,PAPER,true)
 			words(sheet,draft_tactic_line(id,"supply","보급 +%d 전환" % gain,current),15,PAPER,true)
@@ -635,7 +671,7 @@ func perform_roll() -> void:
 		game.restore(before)
 		show_save_error()
 		return
-	show_phase()
+	show_phase(true)
 
 func perform_redraw() -> void:
 	var before = game.checkpoint()
@@ -669,7 +705,24 @@ func choose_perk(id: String) -> void:
 		march_at = before_position
 		show_save_error()
 		return
-	show_phase()
+	var candidate: String = before.draft_candidate
+	if not candidate.is_empty():
+		var face: int = before.draft_result.get_slice("면",0).to_int()
+		var hero: String = Campaign.HEROES[candidate][0]
+		var outcome = "%s 중복, 보급 전환 확정" % hero
+		var color = PAPER
+		if candidate not in before.heroes:
+			outcome = "%s 합류 확정" % hero
+			color = RECRUIT_GREEN
+			play("recruit")
+		elif game.promotion_level(candidate)>before.promotions.get(candidate,0):
+			outcome = "%s 승급 확정 / %d단계" % [hero,game.promotion_level(candidate)]
+			color = PROMOTION_BLUE
+			play("promotion")
+		if face==18:
+			play("great_fortune")
+		confirmed_draft = {"face":face,"text":outcome,"color":color}
+	show_phase(not confirmed_draft.is_empty())
 
 func result_view() -> void:
 	words(screen_body,"한의 건국" if game.phase=="ending" else "행군 중단",35,GOLD)
@@ -903,7 +956,8 @@ func build_sound() -> void:
 		"bow_impact":preload("res://assets/audio/impactPlank_medium_000.ogg"),
 		"spear_impact":preload("res://assets/audio/impactPlank_medium_000.ogg"),
 	}
-	for entry in [["dodge",190.0],["support",660.0],["impact",112.0],["whiff",78.0],["loose",305.0]]:
+	for entry in [["dodge",190.0],["support",660.0],["impact",112.0],["whiff",78.0],["loose",305.0],
+		["recruit",523.25],["promotion",783.99],["great_fortune",1318.51]]:
 		var sound = AudioStreamWAV.new()
 		sound.format = AudioStreamWAV.FORMAT_16_BITS
 		sound.mix_rate = 22050

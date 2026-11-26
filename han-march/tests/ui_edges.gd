@@ -38,6 +38,12 @@ func camp_edges() -> void:
 	var before: Dictionary = ui.game.checkpoint()
 	await snap("narrow-first-camp")
 	var table = camp_labels()
+	if "다음 전장 / 팽성" not in table or "추격병" not in table or "경유지 선택 전" not in table:
+		push_error("Camp forecast omits the next battlefield, its pursuit or the unselected routes")
+		status = 1
+	if ui.game.checkpoint()!=before:
+		push_error("Camp forecast changed checkpoint or RNG state")
+		status = 1
 	if "조참 8/18 | 합류: 기본 대열 → 약낭 돌파" not in table or "항우 0/18 | 역사 행군에서는 등용할 수 없습니다." not in table:
 		push_error("Odds rows omit the tactic transition or the zero-weight reason")
 		status = 1
@@ -53,7 +59,28 @@ func camp_edges() -> void:
 	key.pressed = false
 	root.push_input(key)
 	await snap("narrow-first-recruit")
+	if "합류 예정" not in camp_labels() or "합류 확정" in camp_labels():
+		push_error("The rolled recruit must remain pending")
+		status = 1
 	if ui.game.draft_candidate not in ["han","cao"] or ui.game.supply!=before.supply:
+		status = 1
+	var recruit: String = ui.game.draft_candidate
+	ui.motion_reduced = true
+	ui.continue_run()
+	await snap("narrow-reopened-roll")
+	var settled: float = ui.dice_view.get("reveal_elapsed")
+	if settled<.74 or "합류 예정" not in camp_labels():
+		push_error("Restoring a saved roll should show the pending result without motion")
+		status = 1
+	ui.choose_perk(ui.game.offerings[0].id)
+	await snap("narrow-recruit-confirmed")
+	if recruit not in ui.game.hero_keys or "합류 확정" not in camp_labels() or ui.audio_sequence!=0:
+		push_error("The saved recruit must be announced on the map")
+		status = 1
+	ui.continue_run()
+	await process_frame
+	if "합류 확정" in camp_labels() or ui.audio_sequence!=0:
+		push_error("Reloading a map checkpoint must not replay the confirmed result")
 		status = 1
 	# The imported pending result exercises a duplicate even if the normal roll is a recruit.
 	before.heroes.append_array(["han","cao"])
@@ -126,6 +153,9 @@ func order_edges() -> void:
 		ui.change_odds("lance")
 		ui.perform_roll()
 		await snap("orders-golden-%d" % example[0])
+		if "18면 대길" not in camp_labels() or "조참 승급 확정" in camp_labels():
+			push_error("18 must be visible alongside the pending duplicate reward")
+			status = 1
 		var before: Dictionary = ui.game.checkpoint()
 		var rolled: int = example[0]-1
 		var promote = "승급 시 보급 %d → %d / 전환 +0 / 황금 눈 +1 (상한 9)" % [rolled,rolled+1]
@@ -155,12 +185,33 @@ func order_edges() -> void:
 		if ui.game.checkpoint()!=before or ui.game.supply!=rolled:
 			push_error("Preview changed the rolled checkpoint")
 			status = 1
+		if example[0]==3:
+			var path: String = ui.store_path
+			ui.store_path = path.path_join("unwritable.cfg")
+			ui.choose_perk(ui.game.offerings[0].id)
+			var failed: Dictionary = ui.game.checkpoint()
+			if failed.streams!=before.streams or failed.phase!="camp" or failed.promotions!=before.promotions or failed.supply!=before.supply or failed.draft_candidate!=before.draft_candidate or not ui.save_error or "조참 승급 확정" in camp_labels() or ui.audio_sequence!=0:
+				print("Save failure state: ",failed.phase," / ",failed.promotions," / ",failed.supply," / ",failed.draft_candidate," / ",ui.save_error," / muted cues ",ui.audio_sequence)
+				push_error("Save failure must leave the promotion and its presentation pending")
+				status = 1
+			ui.store_path = path
+			ui.close_modal()
+			await process_frame
+			await process_frame
 		confirm_with_enter()
 		await snap("orders-map-%d-%s" % [example[0],example[1]])
 		var saved = ConfigFile.new()
 		var saved_ok = saved.load(ui.store_path)==OK
 		var state: Dictionary = saved.get_value("checkpoint","state",{}) if saved_ok else {}
 		var promoted: bool = example[1]=="promote"
+		var outcome = "조참 승급 확정" if promoted else "조참 중복, 보급 전환 확정"
+		if "18면 대길" not in camp_labels() or outcome not in camp_labels() or ui.audio_sequence!=0:
+			push_error("Confirmed result must identify both 18 and its saved outcome while muted")
+			status = 1
+		ui.show_phase()
+		if outcome not in camp_labels() or ui.dice_view.get("reveal_elapsed")<.74 or ui.audio_sequence!=0:
+			push_error("Rebuilding the map must preserve the result without replaying it")
+			status = 1
 		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted) or ("조참 최대 및 시작 MP +4" in camp_labels())!=promoted:
 			push_error("Saved supply, rank or RNG differs from the forecast")
 			status = 1

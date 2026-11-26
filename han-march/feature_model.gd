@@ -19,6 +19,7 @@ var hovering := false
 var grain_center := Vector3.ZERO
 var exposure := 0.0
 var bronze_material: ShaderMaterial
+var die_material: StandardMaterial3D
 var face_target := 0
 var reveal_elapsed := 0.0
 var shake_yaw := 0.0
@@ -164,14 +165,14 @@ func build_die() -> void:
 	for i in 18:
 		var angle = TAU*i/18.0
 		border.append(Vector3(cos(angle)*.91,ridge*(-1 if i%2 else 1),sin(angle)*.91))
-	var stone = StandardMaterial3D.new()
-	stone.vertex_color_use_as_albedo = true
-	stone.roughness = 0.61
-	stone.metallic = 0.58
-	stone.cull_mode = BaseMaterial3D.CULL_DISABLED
+	die_material = StandardMaterial3D.new()
+	die_material.vertex_color_use_as_albedo = true
+	die_material.roughness = 0.61
+	die_material.metallic = 0.58
+	die_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var surface = SurfaceTool.new()
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-	surface.set_material(stone)
+	surface.set_material(die_material)
 	for i in 18:
 		var cap_direction = 1.0 if i%2==0 else -1.0
 		var a = Vector3.UP*cap*cap_direction
@@ -193,7 +194,7 @@ func build_die() -> void:
 		label.font = preload("res://assets/NotoSansKR.ttf")
 		label.font_size = 44
 		label.pixel_size = 0.005
-		label.modulate = Color("ffdb9d")
+		label.modulate = Color("fff0ab") if i==17 else Color("ffdb9d")
 		label.outline_size = 0
 		label.shaded = false
 		pivot.add_child(label)
@@ -203,9 +204,16 @@ func build_die() -> void:
 	intact.mesh = surface.commit()
 	pivot.add_child(intact)
 
-func set_face(face: int, animate: bool) -> void:
+func set_face(face: int, animate: bool, tint := Color.WHITE) -> void:
 	face_target = clampi(face,0,18)
-	reveal_elapsed = .0 if animate else .74
+	die_material.albedo_color = tint
+	die_material.emission_enabled = face_target==18 or tint!=Color.WHITE
+	die_material.emission = Color("edb64d") if face_target==18 and tint==Color.WHITE else tint
+	die_material.emission_energy_multiplier = .36 if face_target==18 else .22
+	reveal_elapsed = .0 if animate and not reduced else .74
+	if reveal_elapsed>0.0 and face_target>0:
+		shown_pose = (camera.global_basis*number_frames[face_target-1].inverse()).get_rotation_quaternion()
+		pivot.quaternion = shown_pose
 
 func ray_hit(at: Vector2) -> Variant:
 	var origin = pivot.to_local(camera.project_ray_origin(at))
