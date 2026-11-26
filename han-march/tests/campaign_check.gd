@@ -408,6 +408,72 @@ func tactics_checks() -> void:
 	g.clear_battle()
 	g.host.queue_free()
 
+func tactic_hit(heroes: Array, ranks: Dictionary, id: String, skill: bool) -> Dictionary:
+	var g = make()
+	g.new_run(301,"history")
+	g.hero_keys = heroes
+	g.promotions = ranks
+	g.choose_route(0)
+	g.enter_battle()
+	g.clear_battle()
+	g.barrier.clear()
+	var player = g.make_actor("liu",Vector2(210,210))
+	var enemy = g.make_actor("guard",Vector2(260,210),true)
+	enemy.hp = 1000.0
+	g.team = [player]
+	g.foes = [enemy]
+	if id=="cao":
+		player.p.x -= 90
+		g.team.append(g.make_actor("cao",Vector2(214,210)))
+	for frame in 32:
+		g.tick(Campaign.STEP,Vector2.ZERO,enemy.p,id=="liu" and frame==0,false,false,skill and frame==0)
+	var outcome = {"damage":1000.0-enemy.hp,"events":g.events.duplicate()}
+	g.clear_battle()
+	g.host.queue_free()
+	return outcome
+
+func support_tactics_checks() -> void:
+	var royals = ["liu","fan","han","cao"]
+	var normal = tactic_hit(royals,{},"liu",true)
+	var first = tactic_hit(royals,{"han":1},"liu",true)
+	var second = tactic_hit(royals,{"han":2},"liu",true)
+	expect(normal.damage>0 and is_equal_approx(first.damage,normal.damage*1.25) and is_equal_approx(second.damage,normal.damage*1.35),"Han's first rank activates and second rank strengthens Liu's special hit")
+	expect(first.events.count("왕의 신호")==1 and "방패와 장창" not in first.events,"One support tactic applies once on the special hit")
+	expect(tactic_hit(royals,{"han":1},"liu",false).damage==tactic_hit(royals,{},"liu",false).damage,"Royal signal does not boost a regular sword attack")
+	var regular = tactic_hit(["liu","cao"],{},"cao",false)
+	var regular_promoted = tactic_hit(["liu","cao"],{"cao":1},"cao",false)
+	var joined = tactic_hit(royals,{},"cao",false)
+	var promoted = tactic_hit(royals,{"cao":1},"cao",false)
+	var overridden = tactic_hit(royals,{"han":1,"cao":1},"cao",false)
+	expect(regular.damage>0 and regular_promoted.damage>0 and is_equal_approx(joined.damage,regular.damage*1.20) and is_equal_approx(promoted.damage,regular_promoted.damage*1.30),"Fan and Cao unlock a 20 percent spear hit bonus and Cao promotion raises it")
+	expect(is_equal_approx(overridden.damage,regular_promoted.damage) and "방패와 장창" not in overridden.events,"A promoted Han suppresses the competing support bonus")
+
+	var g = make()
+	g.new_run(245,"history")
+	g.phase = "camp"
+	g.offer_for("liu")
+	var fresh = g.checkpoint()
+	if not g.has_method("project_candidate"):
+		expect(false,"Campaign is missing pure draft projections")
+	else:
+		for id in ["cao","han"]:
+			var joined_roster = g.project_candidate(id,"")
+			expect(g.checkpoint()==fresh,"Roster projection preserves checkpoint and all four streams")
+			g.draft_candidate = id
+			expect(g.advance(g.offerings[0].id) and g.hero_keys==joined_roster.heroes and g.tactics==joined_roster.tactics,"Joining commits the projected roster and tactics for "+id)
+			g.phase = "camp"
+			g.draft_candidate = id
+			var pending = g.checkpoint()
+			var upgraded = g.project_candidate(id,"promote")
+			var converted = g.project_candidate(id,"supply")
+			expect(g.checkpoint()==pending and converted.tactics==g.tactics and converted.promotions==g.promotions,"Duplicate projections preserve streams and conversion preserves tactics")
+			expect(g.advance(g.offerings[0].id,"promote") and g.tactics==upgraded.tactics and g.promotions==upgraded.promotions,"Promotion commits projected tactics and rank for "+id)
+			var committed = g.checkpoint()
+			expect(g.restore(committed) and g.tactics==upgraded.tactics and g.checkpoint()==committed,"Checkpoint derives the same bonus without adding persisted tactic data")
+			expect(g.restore(fresh),"Restore clean camp after projection")
+		expect(g.project_candidate("xiang","").is_empty(),"History rejects a hypothetical Xiang recruit")
+	g.host.queue_free()
+
 func opening_path(seed_value: int, route: int) -> Dictionary:
 	var g = make()
 	g.new_run(seed_value,"history")
@@ -461,6 +527,7 @@ func verify() -> void:
 	promotion_checks()
 	promotion_effect_checks()
 	tactics_checks()
+	support_tactics_checks()
 	diversity_checks()
 	var classic = expedition(12345,"history",[0,0,1,0])
 	var fantasy_seed = 1

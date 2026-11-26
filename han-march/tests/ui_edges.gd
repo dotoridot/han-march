@@ -18,6 +18,12 @@ func snap(name: String) -> void:
 	if directory:
 		root.get_texture().get_image().save_png(directory.path_join(name+".png"))
 
+func camp_labels() -> String:
+	var lines: Array[String] = []
+	for label in ui.screen_body.find_children("*","Label",true,false):
+		lines.append(label.text)
+	return "\n".join(lines)
+
 func camp_edges() -> void:
 	ui.text_zoom = 1.18
 	ui.build_theme()
@@ -30,35 +36,64 @@ func camp_edges() -> void:
 		return
 	var before: Dictionary = ui.game.checkpoint()
 	await snap("narrow-first-camp")
+	var table = camp_labels()
+	if "조참 8/18 | 합류: 기본 대열 → 약낭 돌파" not in table or "항우 0/18 | 역사 행군에서는 등용할 수 없습니다." not in table:
+		push_error("Odds rows omit the tactic transition or the zero-weight reason")
+		status = 1
 	var roll: Button = ui.primary_button
-	if not root.get_visible_rect().encloses(roll.get_global_rect()) or not roll.has_focus():
+	if not root.get_visible_rect().encloses(roll.get_global_rect()) or not roll.has_focus() or roll.accessibility_name!=roll.text:
 		push_error("Free roll is not visible and focused at 760x544")
 		status = 1
-	roll.pressed.emit()
+	var key = InputEventKey.new()
+	key.keycode = KEY_ENTER
+	key.pressed = true
+	root.push_input(key)
+	key = key.duplicate()
+	key.pressed = false
+	root.push_input(key)
 	await snap("narrow-first-recruit")
 	if ui.game.draft_candidate not in ["han","cao"] or ui.game.supply!=before.supply:
 		status = 1
 	# The imported pending result exercises a duplicate even if the normal roll is a recruit.
+	before.heroes.append_array(["han","cao"])
+	before.perks["han"] = []
+	before.perks["cao"] = []
 	before["rolled"] = true
-	before["draft_candidate"] = "fan"
-	before["draft_result"] = "1면 · 번쾌"
+	before["draft_candidate"] = "han"
+	before["draft_result"] = "1면 · 한신"
 	ui.game.restore(before)
 	ui.show_phase()
 	await snap("narrow-duplicate")
+	var options = camp_labels()
+	if "왕의 신호 (유방의 기세 베기 피해 +25%)" not in options or "보급 +2 전환: 방패 엄호" not in options or "방패와 장창 (조참의 공격 피해 +20%)" not in options:
+		push_error("Duplicate options omit the upgrade and conversion previews")
+		status = 1
 	var promote: Button = ui.primary_button
 	if not promote.text.begins_with("승급") or not promote.has_focus() or not root.get_visible_rect().encloses(promote.get_global_rect()):
 		push_error("Promotion choice is not visible and focused at 760x544")
 		status = 1
-	promote.pressed.emit()
+	var click = InputEventMouseButton.new()
+	click.position = promote.get_global_rect().get_center()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	root.push_input(click)
+	click = click.duplicate()
+	click.pressed = false
+	root.push_input(click)
 	await snap("narrow-promote-preview")
 	var confirm: Button = ui.primary_button
-	if ui.game.promotion_level("fan")!=0 or not confirm.has_focus() or not root.get_visible_rect().encloses(confirm.get_global_rect()):
+	if ui.draft_resolution!="promote" or ui.game.promotion_level("han")!=0 or not confirm.has_focus() or not root.get_visible_rect().encloses(confirm.get_global_rect()) or "출발 후 진법: 방패 엄호 (한신이 지원 사격 사용) + 왕의 신호" not in camp_labels():
 		push_error("Confirmation is not visible or the preview already applied its reward")
 		status = 1
-	confirm.pressed.emit()
-	if ui.game.phase!="map" or ui.game.promotion_level("fan")!=1:
+	key = key.duplicate()
+	key.pressed = true
+	root.push_input(key)
+	key = key.duplicate()
+	key.pressed = false
+	root.push_input(key)
+	if ui.game.phase!="map" or ui.game.promotion_level("han")!=1 or ui.game.tactics.support!="royal_signal":
 		status = 1
-	print("Narrow camp 760x544 (118%): first free roll, duplicate options and confirmation")
+	print("Narrow camp 760x544 (118%): keyboard roll, mouse promotion choice, keyboard confirmation")
 
 func verify() -> void:
 	directory = OS.get_environment("HAN_MARCH_CAPTURE")

@@ -43,6 +43,12 @@ const PROMOTION = {
 	"cao":["돌파 찌르기 사거리 +8",8],
 	"xiang":["돌파 찌르기 피해 +18%",0.18],
 }
+const TACTICS = {
+	"shield_cover": ["방패 엄호","한신이 지원 사격 사용"],
+	"medicine_advance": ["약낭 돌파","창 장수가 돌파 찌르기 사용"],
+	"royal_signal": ["왕의 신호","유방의 기세 베기 피해 +%d%%"],
+	"shield_spear": ["방패와 장창","조참의 공격 피해 +%d%%"],
+}
 const ABILITIES = {"brace":[7,7.0],"rally":[12,8.0],"command":[10,5.0],"shield":[7,4.8],"cover":[8,5.5],"heal":[6,3.4],"pierce":[7,4.0]}
 const SKILL_INFO = {
 	"command":["기세 베기","강한 검격"],
@@ -96,7 +102,7 @@ var rerolled = false
 var draft_result = ""
 var draft_candidate = ""
 var report = ""
-var tactic = ""
+var tactics = {"lead":"","support":"","bonus":0}
 var time = 0.0
 var hold = 0.0
 var hold_target = ""
@@ -188,7 +194,7 @@ func new_run(number: int, chosen: String) -> void:
 	draft_candidate = ""
 	completed.clear()
 	rescue_order.clear()
-	tactic = ""
+	refresh_tactic()
 	player_skill = "command"
 	report = ""
 	phase = "map"
@@ -387,15 +393,39 @@ func activate_player_skill(player: Dictionary, aim: Vector2) -> bool:
 			attack(player,aim,true)
 	return true
 
+func resolve_tactics(heroes: Array, ranks: Dictionary) -> Dictionary:
+	var lead := ""
+	if "han" in heroes and "fan" in heroes:
+		lead = "shield_cover"
+	elif "xiao" in heroes and ("cao" in heroes or "xiang" in heroes):
+		lead = "medicine_advance"
+	var support := ""
+	var bonus := 0
+	var han_rank: int = ranks.get("han",0)
+	if "liu" in heroes and "han" in heroes and han_rank>0:
+		support = "royal_signal"
+		bonus = 25+10*(han_rank-1)
+	elif "fan" in heroes and "cao" in heroes:
+		support = "shield_spear"
+		bonus = 20+10*int(ranks.get("cao",0))
+	return {"lead":lead,"support":support,"bonus":bonus}
+
 func refresh_tactic() -> void:
-	tactic = ""
-	if "han" in hero_keys and "fan" in hero_keys:
-		tactic = "shield_cover"
-	elif "xiao" in hero_keys and ("cao" in hero_keys or "xiang" in hero_keys):
-		tactic = "medicine_advance"
+	tactics = resolve_tactics(hero_keys,promotions)
 
 func tactic_name() -> String:
-	return {"shield_cover":"방패 엄호","medicine_advance":"약낭 돌파"}.get(tactic,"기본 대열")
+	var names: Array[String] = []
+	for id in [tactics.lead,tactics.support]:
+		if not id.is_empty(): names.append(TACTICS[id][0])
+	return "기본 대열" if names.is_empty() else " + ".join(names)
+
+func tactic_effects(state: Dictionary) -> String:
+	var effects: Array[String] = []
+	if not state.lead.is_empty():
+		effects.append("%s (%s)" % [TACTICS[state.lead][0],TACTICS[state.lead][1]])
+	if not state.support.is_empty():
+		effects.append("%s (%s)" % [TACTICS[state.support][0],TACTICS[state.support][1] % state.bonus])
+	return "기본 대열" if effects.is_empty() else " + ".join(effects)
 
 func walk(u: Dictionary, dir: Vector2, amount: float) -> void:
 	if dir.is_zero_approx():
@@ -524,6 +554,9 @@ func contact(u: Dictionary) -> void:
 		power *= 1.55
 		if u.id in ["han","xiang"]:
 			power *= 1.0+PROMOTION[u.id][1]*u.promotion
+	var supported: bool = (tactics.support=="royal_signal" and u.id=="liu" and u.attack.special) or (tactics.support=="shield_spear" and u.id=="cao")
+	if supported:
+		power *= 1.0+tactics.bonus/100.0
 	if has(u,"edge") and u.weapon in ["sword","spear"]:
 		power *= 1.25
 	if u.fatigue > 76:
@@ -537,6 +570,7 @@ func contact(u: Dictionary) -> void:
 		queue_cue("loose",1)
 		return
 	var touched := false
+	var landed := false
 	for target in targets_to_hit:
 		var gap: Vector2 = target.p-u.p
 		if gap.length() <= distance and (gap.length()<4 or gap.normalized().dot(direction)>=cos(sweep_angle(u))) and not u.attack.hit.has(target.uid):
@@ -548,7 +582,10 @@ func contact(u: Dictionary) -> void:
 				continue
 			u.attack.hit[target.uid] = true
 			touched = true
-			hurt(target,power,u,u.attack.id,direction)
+			if hurt(target,power,u,u.attack.id,direction):
+				landed = true
+	if supported and landed:
+		events.append(TACTICS[tactics.support][0])
 	if not touched:
 		var wall = line_obstacle(u.p,u.p+direction*distance)
 		var point: Vector2 = u.p+direction*distance*(sqrt(wall) if wall<INF else 0.7)
@@ -687,7 +724,7 @@ func run_ally(u: Dictionary, player: Dictionary, dt: float) -> void:
 	var needy = nearest(u.p,alive(team).filter(func(a): return a!=u and a.max_hp-a.hp>16),135)
 	var vulnerable = u.hp<u.max_hp*0.28 or u.fatigue>83
 	var guard_lead = nearest(player.p,foes,105)
-	var use_cover = u.id=="han" and (tactic=="shield_cover" or has(u,"arch") or u.promotion>0) and not foe.is_empty()
+	var use_cover = u.id=="han" and (tactics.lead=="shield_cover" or has(u,"arch") or u.promotion>0) and not foe.is_empty()
 	if u.decision<=0:
 		board.set_var("options",{"rest":vulnerable,"heal":u.id=="xiao" and not needy.is_empty(),"guard":u.id=="fan" and not guard_lead.is_empty(),"cover":use_cover,"fight":u.id!="xiao" and not foe.is_empty(),"follow":true})
 		bt.update(dt)
@@ -720,10 +757,10 @@ func run_ally(u: Dictionary, player: Dictionary, dt: float) -> void:
 			var attack_range = max_range(u)
 			if u.p.distance_to(foe.p)>=max_range(u,true) or not u.attack.is_empty(): return
 			var use = "cover" if u.weapon=="bow" else "pierce"
-			var boosted = (u.role=="cover" or (u.weapon=="spear" and (tactic=="medicine_advance" or has(u,"edge") or u.promotion>0))) and use_skill(u,use)
+			var boosted = (u.role=="cover" or (u.weapon=="spear" and (tactics.lead=="medicine_advance" or has(u,"edge") or u.promotion>0))) and use_skill(u,use)
 			if boosted:
-				var combined = (use=="cover" and tactic=="shield_cover") or (use=="pierce" and tactic=="medicine_advance")
-				events.append(tactic_name() if combined else SKILL_INFO[use][0])
+				var combined = (use=="cover" and tactics.lead=="shield_cover") or (use=="pierce" and tactics.lead=="medicine_advance")
+				events.append(TACTICS[tactics.lead][0] if combined else SKILL_INFO[use][0])
 			if boosted or u.p.distance_to(foe.p)<attack_range:
 				attack(u,foe.p,boosted)
 		_:
@@ -866,8 +903,8 @@ func offer_for(id: String) -> void:
 func promotion_level(id: String) -> int:
 	return promotions.get(id,0)
 
-func duplicate_supply_gain() -> int:
-	return clampi(SUPPLY_CAP-supply,0,DUPLICATE_SUPPLY)
+func duplicate_supply_gain(roll_cost := 0) -> int:
+	return clampi(SUPPLY_CAP-(supply-roll_cost),0,DUPLICATE_SUPPLY)
 
 func first_free_recruit() -> bool:
 	return chapter==0 and draft_plan=="balance" and DRAFT.any(func(id):
@@ -921,21 +958,34 @@ func roll() -> bool:
 	draft_done = true
 	return true
 
-func accept_candidate(resolution: String) -> void:
-	if draft_candidate.is_empty():
-		return
-	if draft_candidate in hero_keys:
-		if resolution=="promote":
-			promotions[draft_candidate] = promotion_level(draft_candidate)+1
+func project_candidate(candidate: String, resolution: String) -> Dictionary:
+	var heroes := hero_keys.duplicate()
+	var ranks := promotions.duplicate()
+	var gain := 0
+	if candidate!="" and (candidate not in DRAFT or (candidate=="xiang" and mode!="fiction")):
+		return {}
+	if candidate in heroes:
+		if resolution=="promote" and promotion_level(candidate)<PROMOTION_CAP:
+			ranks[candidate] = promotion_level(candidate)+1
+		elif resolution=="supply":
+			gain = duplicate_supply_gain()
 		else:
-			supply += duplicate_supply_gain()
-	else:
-		hero_keys.append(draft_candidate)
+			return {}
+	elif not resolution.is_empty():
+		return {}
+	elif not candidate.is_empty():
+		heroes.append(candidate)
+	return {"heroes":heroes,"promotions":ranks,"gain":gain,"tactics":resolve_tactics(heroes,ranks)}
+
+func accept_candidate(projected: Dictionary) -> void:
+	if not draft_candidate.is_empty() and draft_candidate not in hero_keys:
 		names_upgrades[draft_candidate] = []
-		if draft_candidate=="xiang":
-			remember("fantasy")
+		if draft_candidate=="xiang": remember("fantasy")
+	hero_keys = projected.heroes
+	promotions = projected.promotions
+	supply += projected.gain
+	tactics = projected.tactics
 	draft_candidate = ""
-	refresh_tactic()
 
 func redraw_reward() -> bool:
 	if not draft_done or rerolled or phase!="camp" or supply<2:
@@ -951,13 +1001,11 @@ func redraw_reward() -> bool:
 func advance(perk: String, resolution := "") -> bool:
 	if phase!="camp" or not offerings.any(func(option): return option.id==perk):
 		return false
-	if draft_candidate in hero_keys:
-		if resolution!="supply" and (resolution!="promote" or promotion_level(draft_candidate)>=PROMOTION_CAP):
-			return false
-	elif not resolution.is_empty():
+	var projected := project_candidate(draft_candidate,resolution)
+	if projected.is_empty():
 		return false
 	names_upgrades[offered_to].append(perk)
-	accept_candidate(resolution)
+	accept_candidate(projected)
 	chapter += 1
 	phase = "map"
 	selected_route = -1
