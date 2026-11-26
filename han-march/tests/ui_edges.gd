@@ -25,6 +25,86 @@ func camp_labels() -> String:
 		lines.append(label.text)
 	return "\n".join(lines)
 
+func map_badge(name: String) -> Button:
+	for button in ui.screen_body.find_children("*","Button",true,false):
+		if button.accessibility_name==name:
+			return button
+	return null
+
+func check_map_badge(name: String, detail: String) -> void:
+	var badge = map_badge(name)
+	if badge==null or not root.get_visible_rect().encloses(badge.get_global_rect()) or detail not in badge.accessibility_description:
+		push_error("The map badge must identify the confirmed result or order: %s" % name)
+		status = 1
+		return
+	for label in ui.screen_body.find_children("*","Label",true,false):
+		if label.is_visible_in_tree() and detail in label.text:
+			push_error("Map details should start collapsed: %s" % name)
+			status = 1
+	var tab = InputEventKey.new()
+	tab.keycode = KEY_TAB
+	tab.physical_keycode = KEY_TAB
+	for step in 8:
+		if badge.has_focus(): break
+		tab.pressed = true
+		root.push_input(tab)
+		tab = tab.duplicate()
+		tab.pressed = false
+		root.push_input(tab)
+		tab = tab.duplicate()
+		await process_frame
+	if not badge.has_focus():
+		push_error("Tab must reach the map badge: %s" % name)
+		status = 1
+		return
+	await snap("map-badge-"+name)
+	for label in ui.screen_body.find_children("*","Label",true,false):
+		if label.text==badge.accessibility_description and label.is_visible_in_tree() and root.get_visible_rect().encloses(label.get_global_rect()) and label.get_visible_line_count()==label.get_line_count():
+			confirm_with_enter()
+			await process_frame
+			if label.is_visible_in_tree() or not badge.has_focus():
+				push_error("Enter must close the map detail without moving focus: %s" % name)
+				status = 1
+			return
+	push_error("Focusing the map badge must show its full detail: %s" % name)
+	status = 1
+
+func check_camp_layout() -> void:
+	var sections = ui.screen_body.find_child("CampColumns",true,false)
+	var cards = ui.screen_body.find_child("CampCards",true,false)
+	var scroll = ui.screen_body.find_child("CampScroll",true,false)
+	if sections==null or cards==null or scroll==null:
+		push_error("Camp must group the forecast, three sections and offered cards")
+		status = 1
+		return
+	var wide = root.size.x==1280
+	var expected_columns = 3 if wide else 1
+	var frame: Rect2 = scroll.get_global_rect()
+	var checks = sections.get_child_count()==3 and sections.columns==expected_columns and cards.columns==expected_columns
+	checks = checks and cards.get_child_count()==ui.game.offerings.size()
+	if wide:
+		var forecast: Array[String] = []
+		for label in ui.screen_body.find_children("*","Label",true,false):
+			var bounds: Rect2 = label.get_global_rect()
+			if root.get_visible_rect().encloses(bounds) and (not scroll.is_ancestor_of(label) or frame.encloses(bounds)):
+				forecast.append(label.text)
+		checks = checks and forecast.any(func(copy): return copy.begins_with("다음 전장 / "))
+		checks = checks and forecast.has("보급 %d" % ui.game.supply)
+		checks = checks and scroll.scroll_vertical==0 and not scroll.get_v_scroll_bar().visible
+		checks = checks and frame.encloses(sections.get_global_rect()) and frame.encloses(cards.get_global_rect())
+	for i in cards.get_child_count():
+		var button: Button = cards.get_child(i)
+		var perk: Dictionary = ui.game.offerings[i]
+		var effect: Label = button.find_children("*","Label",true,false).back()
+		checks = checks and effect.text==perk.text and perk.text in button.accessibility_description
+		checks = checks and button.get_global_rect().encloses(effect.get_global_rect()) and effect.get_visible_line_count()==effect.get_line_count()
+		if i>0:
+			var first: Button = cards.get_child(0)
+			checks = checks and (button.position.y==first.position.y if wide else button.position.y>first.position.y)
+	if not checks:
+		push_error("Camp layout clips at %s: scroll %s, bar %s, sections %s, cards %s" % [root.size,frame,scroll.get_v_scroll_bar().visible,sections.get_global_rect(),cards.get_global_rect()])
+		status = 1
+
 func camp_edges() -> void:
 	ui.text_zoom = 1.18
 	ui.build_theme()
@@ -41,6 +121,7 @@ func camp_edges() -> void:
 		status = 1
 	ui.show_phase()
 	await snap("narrow-first-camp")
+	check_camp_layout()
 	var table = camp_labels()
 	if "다음 전장 / 팽성" not in table or "추격병" not in table or "경유지 선택 전" not in table:
 		push_error("Camp forecast omits the next battlefield, its pursuit or the unselected routes")
@@ -55,6 +136,18 @@ func camp_edges() -> void:
 	if not root.get_visible_rect().encloses(roll.get_global_rect()) or not roll.has_focus() or roll.accessibility_name!=roll.text:
 		push_error("Free roll is not visible and focused at 760x544")
 		status = 1
+	var scroll: ScrollContainer = ui.screen_body.find_child("CampScroll",true,false)
+	if scroll!=null:
+		var previous = scroll.scroll_vertical
+		var page = InputEventKey.new()
+		page.physical_keycode = KEY_PAGEUP
+		page.pressed = true
+		root.push_input(page)
+		await process_frame
+		if scroll.scroll_vertical>=previous:
+			push_error("Page Up must scroll the narrow camp without a pointer")
+			status = 1
+		scroll.scroll_vertical = previous
 	var key = InputEventKey.new()
 	key.keycode = KEY_ENTER
 	key.pressed = true
@@ -63,6 +156,7 @@ func camp_edges() -> void:
 	key.pressed = false
 	root.push_input(key)
 	await snap("narrow-first-recruit")
+	check_camp_layout()
 	if "합류 예정" not in camp_labels() or "합류 확정" in camp_labels():
 		push_error("The rolled recruit must remain pending")
 		status = 1
@@ -78,12 +172,14 @@ func camp_edges() -> void:
 		status = 1
 	ui.choose_perk(ui.game.offerings[0].id)
 	await snap("narrow-recruit-confirmed")
-	if recruit not in ui.game.hero_keys or "합류 확정" not in camp_labels() or ui.audio_sequence!=0:
+	var recruit_name = "대길 합류" if ui.confirmed_draft.get("face",0)==18 else "등용 합류"
+	await check_map_badge(recruit_name,Campaign.HEROES[recruit][0]+" 합류 확정")
+	if recruit not in ui.game.hero_keys or ui.audio_sequence!=0:
 		push_error("The saved recruit must be announced on the map")
 		status = 1
 	ui.continue_run()
 	await process_frame
-	if "합류 확정" in camp_labels() or ui.audio_sequence!=0:
+	if map_badge(recruit_name)!=null or ui.audio_sequence!=0:
 		push_error("Reloading a map checkpoint must not replay the confirmed result")
 		status = 1
 	# The imported pending result exercises a duplicate even if the normal roll is a recruit.
@@ -189,11 +285,13 @@ func order_edges() -> void:
 		ui.show_phase()
 		var streams: Array = ui.game.checkpoint().streams
 		await snap("orders-unrolled")
+		check_camp_layout()
 		if ui.game.checkpoint().streams!=streams:
 			status = 1
 		ui.change_odds("lance")
 		ui.perform_roll()
 		await snap("orders-golden-%d" % example[0])
+		check_camp_layout()
 		if "18면 대길" not in camp_labels() or "조참 승급 확정" in camp_labels():
 			push_error("18 must be visible alongside the pending duplicate reward")
 			status = 1
@@ -203,9 +301,11 @@ func order_edges() -> void:
 		var conversion: int = mini(2,9-rolled)
 		var supply = "보급 전환 시 보급 %d → %d / 전환 +%d / 황금 눈 +%d (상한 9)" % [
 			rolled,mini(9,rolled+conversion+1),conversion,int(rolled+conversion<9)]
-		if not "눈 18 / 18" in camp_labels() or not "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in camp_labels():
-			push_error("Camp labels omit the final face or the first-healing effect")
+		if not "눈 18 / 18" in camp_labels():
+			push_error("Camp labels omit the final face")
 			status = 1
+		if example[0]==3:
+			await check_camp_orders()
 		if directory and example[0]==3:
 			DirAccess.copy_absolute(ui.store_path,directory.path_join("camp.cfg"))
 		check_reward_view(promote, "승급")
@@ -214,12 +314,13 @@ func order_edges() -> void:
 			status = 1
 		confirm_with_enter()
 		await snap("orders-promotion-%d" % example[0])
+		check_camp_layout()
 		check_reward_view(promote,"강화")
-		var pending_label: Label
-		for label in ui.dice_view.get_parent().find_children("*","Label",true,false):
-			if label.text.begins_with("조참 승급 예정"):
-				pending_label = label
-		if not is_instance_valid(pending_label) or not root.get_visible_rect().encloses(pending_label.get_global_rect()):
+		var pending_visible = false
+		for label in ui.screen_body.find_children("*","Label",true,false):
+			if label.text.begins_with("조참 승급 예정") and label.is_visible_in_tree() and root.get_visible_rect().encloses(label.get_global_rect()):
+				pending_visible = true
+		if not pending_visible:
 			push_error("The pending promotion must stay visible when focus scrolls to the perk")
 			status = 1
 		if example[0]==9:
@@ -256,14 +357,20 @@ func order_edges() -> void:
 		if not root.get_visible_rect().encloses(ui.map_prompt.get_global_rect()) or not root.get_visible_rect().encloses(ui.primary_button.get_global_rect()):
 			push_error("The confirmed result must leave the map controls and prompt visible")
 			status = 1
-		if "18면 대길" not in camp_labels() or outcome not in camp_labels() or ui.audio_sequence!=0:
-			push_error("Confirmed result must identify both 18 and its saved outcome while muted")
-			status = 1
+		var badge_name = "대길 승급" if promoted else "대길 환전"
+		await check_map_badge(badge_name,"등용 확정 / 18면 대길 / "+outcome)
+		var has_ration = map_badge("군량 순환 군령")!=null
+		if promoted:
+			await check_map_badge("군량 순환 군령","군령 / 군량 순환 / 조참 최대 및 시작 MP +4")
 		ui.show_phase()
-		if outcome not in camp_labels() or ui.dice_view.get("reveal_elapsed")<.74 or ui.audio_sequence!=0:
+		await check_map_badge(badge_name,"등용 확정 / 18면 대길 / "+outcome)
+		if ui.dice_view.get("reveal_elapsed")<.74 or ui.audio_sequence!=0:
 			push_error("Rebuilding the map must preserve the result without replaying it")
 			status = 1
-		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted) or ("조참 최대 및 시작 MP +4" in camp_labels())!=promoted:
+		if has_ration!=promoted:
+			push_error("Only a promotion with ration cycle must add its order badge")
+			status = 1
+		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted):
 			push_error("Saved supply, rank or RNG differs from the forecast")
 			status = 1
 	var convoy = camp.duplicate(true)
@@ -283,11 +390,29 @@ func order_edges() -> void:
 		await process_frame
 		await process_frame
 		for control in ui.screen_body.find_children("*","Control",true,false):
-			if (control is Label or control is Button) and not root.get_visible_rect().encloses(control.get_global_rect()):
+			if (control is Label or control is Button) and control.is_visible_in_tree() and not root.get_visible_rect().encloses(control.get_global_rect()):
 				push_error("The confirmed convoy route or prompt is clipped: %s" % control.text)
 				status = 1
 	print("Convoy map / all labels and buttons inspected in ",root.size)
 	await ration_heal(camp)
+	var late = camp.duplicate(true)
+	late.chapter = 2
+	late.heroes.append("han")
+	late.perks.han = []
+	late.mode = "fiction"
+	ui.game.restore(late)
+	ui.show_phase()
+	await snap("orders-late-odds")
+	check_camp_layout()
+	late.draft_plan = "lance"
+	late.rolled = true
+	late.draft_candidate = "cao"
+	late.draft_result = "18면 / 조참"
+	ui.game.restore(late)
+	ui.show_phase()
+	ui.choose_draft_resolution("promote")
+	await snap("orders-late-promotion")
+	check_camp_layout()
 	if OS.get_environment("HAN_MARCH_FORECAST_AUDIO_TEST")=="1":
 		check_draft_audio(camp)
 	print("Orders UI ",root.size," / text scale ",ui.text_zoom," / result ",status)
@@ -353,16 +478,42 @@ func check_draft_audio(camp: Dictionary) -> void:
 		print("Draft audio ",example[0],"/",example[1],"/",example[2],": ",played," / first slot ",slot," / total ",ui.audio_sequence-first)
 	AudioServer.set_bus_mute(0,true)
 
+func check_camp_orders() -> void:
+	var details = map_badge("진법 규칙과 적용 중인 군령")
+	if details==null:
+		push_error("Camp is missing its order details control")
+		status = 1
+		return
+	var primary: Button = ui.primary_button
+	details.grab_focus()
+	confirm_with_enter()
+	await snap("orders-detail")
+	var scroller: ScrollContainer = ui.modal_content.get_parent()
+	var effects: Array[String] = []
+	for label in ui.modal_content.find_children("*","Label",true,false):
+		if label.is_visible_in_tree() and scroller.get_global_rect().encloses(label.get_global_rect()) and label.get_visible_line_count()==label.get_line_count():
+			effects.append(label.text)
+	if not effects.any(func(copy): return "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in copy) or scroller.get_v_scroll_bar().visible:
+		push_error("The active order must show its full text inside the details viewport")
+		status = 1
+	confirm_with_enter()
+	await process_frame
+	if ui.modal_active or not details.has_focus():
+		push_error("Closing the order details must restore focus to its trigger")
+		status = 1
+	primary.grab_focus()
+	await process_frame
+
 func check_reward_view(note: String, stage: String) -> void:
 	var focus: Control = root.gui_get_focus_owner()
 	var bounds = Rect2()
 	for label in ui.screen_body.find_children("*","Label",true,false):
-		if note in label.text and label.get_parent()==ui.screen_body:
+		if note in label.text and label.is_visible_in_tree():
 			bounds = label.get_global_rect()
 			break
 	var desc: String = focus.accessibility_description if focus!=null else ""
 	print(stage," ",note," / label ",bounds," / viewport ",root.get_visible_rect()," / AX ",desc)
-	if not bounds.has_area() or not root.get_visible_rect().encloses(bounds) or focus==null or focus!=ui.primary_button or not root.get_visible_rect().encloses(focus.get_global_rect()) or desc!=note:
+	if not bounds.has_area() or not root.get_visible_rect().encloses(bounds) or focus==null or focus!=ui.primary_button or not root.get_visible_rect().encloses(focus.get_global_rect()) or (desc!=note and not desc.begins_with(note+" / ")):
 		push_error("Refund summary and accessible description are required at the focused decision")
 		status = 1
 
@@ -389,8 +540,7 @@ func ration_heal(camp: Dictionary) -> void:
 		status = 1
 	confirm_with_enter()
 	await snap("orders-heal-map")
-	if not "소하 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" in camp_labels():
-		status = 1
+	await check_map_badge("군량 순환 군령","소하 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10")
 	ui.choose_route(0)
 	ui.complete_travel()
 	var game = ui.game
