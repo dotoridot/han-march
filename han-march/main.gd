@@ -497,6 +497,7 @@ func map_view(reveal_draft: bool) -> void:
 		preview_panel.hide()
 		var buttons: Array[Button] = []
 		var dismissed: Array[Button] = []
+		var modal_focus: Array[Button] = []
 		var refresh_detail = func(prefer_hover: bool):
 			if not is_instance_valid(preview) or not preview.is_inside_tree(): return
 			var hovered := get_viewport().gui_get_hovered_control() if prefer_hover else null
@@ -506,13 +507,15 @@ func map_view(reveal_draft: bool) -> void:
 				current = get_viewport().gui_get_focus_owner() as Button
 			preview_panel.visible = current in buttons and current not in dismissed
 			if preview_panel.visible:
-				dismissed.clear()
 				preview.text = current.accessibility_description
 		var dismiss_detail = func() -> bool:
 			if not is_instance_valid(preview_panel) or not preview_panel.is_visible_in_tree(): return false
 			for button in buttons:
 				if preview.text==button.accessibility_description:
 					dismissed.assign([button])
+					var focused := get_viewport().gui_get_focus_owner() as Button
+					if focused in buttons and focused!=button:
+						dismissed.append(focused)
 					preview_panel.hide()
 					return true
 			return false
@@ -523,7 +526,7 @@ func map_view(reveal_draft: bool) -> void:
 			if preview_panel.visible and preview.text==focused.accessibility_description:
 				dismiss_detail.call()
 			else:
-				dismissed.clear()
+				dismissed.erase(focused)
 				refresh_detail.call(false)
 		preview_panel.mouse_exited.connect(func(): refresh_detail.call_deferred(true))
 		for badge in badges:
@@ -559,11 +562,16 @@ func map_view(reveal_draft: bool) -> void:
 				icon.size = Vector2(26,28)
 			buttons.append(button)
 			button.mouse_entered.connect(func():
-				if not button.has_focus(): dismissed.erase(button)
+				dismissed.erase(button)
 				refresh_detail.call_deferred(true))
 			button.mouse_exited.connect(func(): refresh_detail.call_deferred(true))
-			button.focus_entered.connect(func(): refresh_detail.call_deferred(false))
-			button.focus_exited.connect(func(): refresh_detail.call_deferred(false))
+			button.focus_entered.connect(func():
+				if button not in modal_focus: dismissed.erase(button)
+				modal_focus.clear()
+				refresh_detail.call_deferred(false))
+			button.focus_exited.connect(func():
+				if modal_active: modal_focus.assign([button])
+				refresh_detail.call_deferred(false))
 		status.custom_minimum_size.x = maxf(300,controls.get_combined_minimum_size().x)
 
 	screen_body.add_spacer(false).mouse_filter = MOUSE_FILTER_IGNORE

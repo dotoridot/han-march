@@ -17,17 +17,18 @@ func expect(passed: bool, description: String) -> void:
 		failures.append(description)
 		printerr(description)
 
-func key(code: Key, pressed: bool) -> void:
+func key(code: Key, pressed: bool, reverse := false) -> void:
 	var event = InputEventKey.new()
 	event.physical_keycode = code
 	event.keycode = code
 	event.pressed = pressed
+	event.shift_pressed = reverse
 	Input.parse_input_event(event)
 	Input.flush_buffered_events()
 
-func tap(code: Key) -> void:
-	key(code,true)
-	key(code,false)
+func tap(code: Key, reverse := false) -> void:
+	key(code,true,reverse)
+	key(code,false,reverse)
 
 func step_to(at: Vector2) -> void:
 	for _step in 150:
@@ -206,6 +207,17 @@ func map_badge_details(window_size: Vector2i) -> void:
 	tap(KEY_ENTER)
 	await process_frame
 	expect(result.is_visible_in_tree() and result.text==badges[0].accessibility_description,"Enter reopens the same result")
+	tap(KEY_ENTER)
+	await process_frame
+	tap(KEY_TAB,true)
+	await process_frame
+	var menu := root.gui_get_focus_owner()
+	expect(menu!=null and menu.accessibility_name=="메뉴" and not app.modal_active,"Shift+Tab leaves the closed badge without opening the menu")
+	tap(KEY_TAB)
+	await process_frame
+	expect(badges[0].has_focus() and result.is_visible_in_tree() and result.text==badges[0].accessibility_description,
+		"Ordinary Tab reentry shows the result again")
+
 
 	mouse.position = badges[0].get_global_rect().get_center()
 	root.push_input(mouse)
@@ -216,6 +228,30 @@ func map_badge_details(window_size: Vector2i) -> void:
 	click_map(mouse.position)
 	await process_frame
 	expect(result.is_visible_in_tree() and result.text==badges[0].accessibility_description,"Click reopens the same result")
+	mouse.position = badges[1].get_global_rect().get_center()
+	root.push_input(mouse)
+	await process_frame
+	await process_frame
+	expect(badges[0].has_focus() and result.is_visible_in_tree() and result.text==badges[1].accessibility_description,
+		"Hover shows an order while keyboard focus stays on the result")
+	mouse.position = result.get_global_rect().get_center()
+	root.push_input(mouse)
+	await process_frame
+	expect(result.is_visible_in_tree() and result.text==badges[1].accessibility_description,
+		"The hovered order stays open under its detail")
+	tap(KEY_ESCAPE)
+	await process_frame
+	await process_frame
+	expect(not result.is_visible_in_tree() and badges[0].has_focus() and not app.modal_active,
+		"Escape over the hovered order closes both detail sources")
+	mouse.position = Vector2(8,8)
+	root.push_input(mouse)
+	await process_frame
+	expect(not result.is_visible_in_tree(),"Moving away after Escape leaves the focused detail closed")
+	tap(KEY_ENTER)
+	await process_frame
+	expect(result.is_visible_in_tree() and result.text==badges[0].accessibility_description,
+		"Enter explicitly reopens the focused result after Escape")
 	tap(KEY_ESCAPE)
 	await process_frame
 	expect(not result.is_visible_in_tree() and badges[0].has_focus() and not app.modal_active,
