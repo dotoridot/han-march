@@ -5,6 +5,7 @@ const NORMALS = preload("res://assets/illustration/normals.png")
 const TYPES = ["liu","fan","xiao","han","cao","xiang","guard","pursuer","archer","fiction"]
 const GEAR = ["sword","axe","shield","bow","bow_drawn","spear","aid","quiver","arrow"]
 const BONE_MASK = 2
+const FILL_MASK = 4
 const CELL = 192
 const BODY_PARTS = 11
 const ARM = 7.6
@@ -18,9 +19,14 @@ const MOTION = {
 	"spear":[Vector3(-0.2,2,-2),Vector3(-0.1,3,-2),Vector3(0,15,3),Vector3(0.08,11,1),Vector3(0.2,7,0)],
 	"aid":[Vector3(-0.33,5,-1),Vector3(-0.4,7,-1),Vector3(0,12,1),Vector3(0.12,10,1),Vector3(0.26,6,0)],
 }
+const CONTOURS = "res://assets/illustration/contours.json"
+const VIEW_MARGIN = 0.12
+const VIEW_STEPS = [Vector2.DOWN,Vector2.RIGHT,Vector2.UP,Vector2.LEFT]
 const KEY_TIMES = [0.0,0.29,0.55,0.77,1.0]
 static var fabric: CanvasTexture
 static var poses: AnimationLibrary
+static var outlines: Array[PackedVector2Array] = []
+static var texels: Array[PackedVector2Array] = []
 
 var skin_index := 0
 var weapon := "sword"
@@ -32,15 +38,18 @@ var arms: Array[Bone2D] = []
 var forearms: Array[Bone2D] = []
 var thighs: Array[Bone2D] = []
 var boots: Array[Bone2D] = []
-var pieces: Array[Sprite2D] = []
-var chest: Sprite2D
-var face: Sprite2D
-var tool: Sprite2D
-var guard: Sprite2D
-var arrow: Sprite2D
+var pieces: Array[Polygon2D] = []
+var torso_views: Array[Polygon2D] = []
+var head_views: Array[Polygon2D] = []
+var tool: Node2D
+var blade: Polygon2D
+var bent_bow: Polygon2D
+var guard: Polygon2D
+var arrow: Polygon2D
 var gait := 0.0
 var rank := -1
-var stance := 0
+var stance := -1
+var has_fill := false
 
 func setup(id: String, gear_name: String) -> void:
 	skin_index = maxi(0,TYPES.find("xiang" if id=="captain" else id))
@@ -63,15 +72,27 @@ func setup(id: String, gear_name: String) -> void:
 	drape.visible = id in ["liu","xiao","xiang","captain","fiction"]
 	paint(arms[0],6,Vector2.ZERO)
 	paint(forearms[0],7,Vector2.ZERO)
-	chest = paint(core,0,Vector2.ZERO)
+	for part in 3: torso_views.append(paint(core,part,Vector2.ZERO))
 	if weapon=="bow":
 		paint(core,gear_cell("quiver"),Vector2(-5.4,4)).rotation = -0.38
-	face = paint(crown,3,Vector2.ZERO)
+	for part in 3: head_views.append(paint(crown,part+3,Vector2.ZERO))
 	paint(arms[1],6,Vector2.ZERO)
 	paint(forearms[1],7,Vector2.ZERO)
-	tool = paint(forearms[1],gear_cell(weapon),Vector2(0,WRIST))
+	tool = Node2D.new()
+	forearms[1].add_child(tool)
+	tool.position = Vector2(0,WRIST)
+	tool.scale = Vector2.ONE*0.25
+	blade = paint(tool,gear_cell(weapon),Vector2.ZERO)
+	blade.scale = Vector2.ONE
+	if weapon=="bow":
+		bent_bow = paint(tool,gear_cell("bow_drawn"),Vector2.ZERO)
+		bent_bow.scale = Vector2.ONE
+		bent_bow.hide()
 	if weapon=="axe": guard = paint(forearms[0],gear_cell("shield"),Vector2(0,WRIST))
-	if weapon=="bow": arrow = paint(forearms[0],gear_cell("arrow"),Vector2(0,WRIST))
+	if weapon=="bow":
+		arrow = paint(forearms[0],gear_cell("arrow"),Vector2(0,WRIST))
+		arrow.hide()
+	update_view(Vector2.DOWN)
 	player = AnimationPlayer.new()
 	player.root_node = NodePath("..")
 	player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
@@ -86,6 +107,17 @@ static func init_resources() -> void:
 	fabric.diffuse_texture = PIGMENTS
 	fabric.normal_texture = NORMALS
 	fabric.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	var cells: Array = JSON.parse_string(FileAccess.get_file_as_string(CONTOURS))
+	for cell in cells.size():
+		var outline := PackedVector2Array()
+		var uv := PackedVector2Array()
+		var origin := Vector2(cell%12,floori(cell/12.0))*CELL
+		for i in range(0,cells[cell].size(),2):
+			var point = Vector2(cells[cell][i],cells[cell][i+1])
+			outline.append(point-Vector2.ONE*CELL*0.5)
+			uv.append(origin+point)
+		outlines.append(outline)
+		texels.append(uv)
 	poses = AnimationLibrary.new()
 	for kind in MOTION:
 		var clip = Animation.new()
@@ -111,28 +143,49 @@ func link(parent: Node2D, title: String, at: Vector2, length_value: float) -> Bo
 func gear_cell(id: String) -> int:
 	return TYPES.size()*BODY_PARTS+GEAR.find(id)
 
-func paint(parent: Bone2D, part: int, at: Vector2) -> Sprite2D:
-	var sprite = Sprite2D.new()
-	sprite.texture = fabric
-	sprite.region_enabled = true
-	sprite.light_mask = BONE_MASK
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	sprite.z_as_relative = false
-	parent.add_child(sprite)
-	sprite.position = at
-	sprite.scale = Vector2.ONE*0.25
-	assign_cell(sprite,part)
-	pieces.append(sprite)
-	return sprite
+func paint(parent: Node2D, part: int, at: Vector2) -> Polygon2D:
+	var mesh = Polygon2D.new()
+	var cell = part+skin_index*BODY_PARTS if part<BODY_PARTS else part
+	mesh.texture = fabric
+	mesh.polygon = outlines[cell]
+	mesh.uv = texels[cell]
+	mesh.light_mask = BONE_MASK
+	mesh.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	mesh.z_as_relative = false
+	parent.add_child(mesh)
+	mesh.position = at
+	mesh.scale = Vector2.ONE*0.25
+	pieces.append(mesh)
+	return mesh
 
-func assign_cell(sprite: Sprite2D, part: int) -> void:
-	var column = part+skin_index*BODY_PARTS if part<BODY_PARTS else part
-	sprite.region_rect = Rect2(Vector2((column%12)*CELL,floori(column/12.0)*CELL),Vector2.ONE*CELL)
+func update_view(direction: Vector2) -> void:
+	var next := 1 if direction.x>=0.0 else 3
+	if absf(direction.y)>absf(direction.x):
+		next = 0 if direction.y>=0.0 else 2
+	if next==stance or stance>=0 and direction.dot(VIEW_STEPS[next])-direction.dot(VIEW_STEPS[stance])<VIEW_MARGIN:
+		return
+	stance = next
+	var original = 1 if stance==3 else stance
+	var sign_x = -1.0 if stance==3 else 1.0
+	for i in 3:
+		torso_views[i].visible = i==original
+		head_views[i].visible = i==original
+	torso_views[1].scale.x = 0.25*sign_x
+	head_views[1].scale.x = 0.25*sign_x
+	blade.scale.y = sign_x
+	if bent_bow!=null: bent_bow.scale.y = sign_x
+	if guard!=null: guard.scale.x = 0.25*sign_x
+
+func set_fill(value: bool) -> void:
+	if value==has_fill: return
+	has_fill = value
+	var mask = BONE_MASK | FILL_MASK if value else BONE_MASK
+	for piece in pieces: piece.light_mask = mask
 
 func set_rank(index: int) -> void:
 	if rank==index: return
 	rank = index
-	for i in pieces.size(): pieces[i].z_index = 16+rank*16+i
+	for i in pieces.size(): pieces[i].z_index = 16+rank*24+i
 
 func aim_limb(start: Bone2D, elbow: Bone2D, endpoint: Vector2, upper: float, lower: float, bend: float) -> void:
 	var span = endpoint-start.position
@@ -149,21 +202,18 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 	if not visible: return
 	var activity: Dictionary = unit.attack
 	var facing: Vector2 = unit.face if activity.is_empty() else activity.dir
-	var mirror = -1.0 if facing.x< -0.18 else 1.0
-	var direction = Vector2(facing.x*mirror,facing.y)
-	var view := 2 if direction.y< -0.57 else (0 if direction.y>0.57 else 1)
-	if view!=stance:
-		stance = view
-		assign_cell(chest,view)
-		assign_cell(face,3+view)
-	scale = Vector2(mirror,1.0)
+	var direction: Vector2 = facing.normalized()
+	if direction.is_zero_approx(): direction = VIEW_STEPS[stance]
+	update_view(direction)
+	# Hand offsets use the live angle. Switching the artwork never rotates the grip.
+	var side: float = smoothstep(-0.6,0.6,direction.x)*2.0-1.0
 	var movement: bool = unit.move and not reduced
 	if movement:
 		gait = unit.step*0.48
 	var cycle: float = sin(gait) if movement else 0.0
 	var weight := cycle*0.9
 	var reach := 8.5
-	var angle := direction.angle()+0.43
+	var angle := direction.angle()+0.43*side
 	var lift := 0.0
 	if not activity.is_empty():
 		var age: float = activity.step
@@ -171,13 +221,13 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 		# The presentation track reaches its contact key on the existing simulation tick.
 		var time = 0.55*age/impact if age<=impact else 0.55+0.45*(age-impact)/(activity.duration-impact)
 		player.seek(time,true)
-		angle = direction.angle()+phase_motion.x
+		angle = direction.angle()+phase_motion.x*side
 		reach = phase_motion.y
 		weight = phase_motion.z if not reduced else 0.0
 		lift = 1.7 if weapon=="axe" and age<impact else 0.0
 		if activity.special and not reduced: weight *= 1.18
 	if evading and not reduced: weight = 3.7
-	var recoil = Vector2.ZERO if reduced else Vector2(unit.recoil.x*mirror,unit.recoil.y)*clampf(unit.hit/0.17,0,1)
+	var recoil = Vector2.ZERO if reduced else Vector2(unit.recoil)*clampf(unit.hit/0.17,0,1)
 	core.position = Vector2(0,-29)+direction*weight+recoil
 	core.rotation = clampf(direction.x*weight*0.035,-0.16,0.16)
 	crown.rotation = -core.rotation*0.7
@@ -193,22 +243,26 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 			planted += direction*(1.7 if i==0 else -1.2)
 		aim_limb(thighs[i],boots[i],planted,THIGH,SHIN,-foot_sign)
 	var forward = Vector2.from_angle(angle)
-	var hand = Vector2(2.9,5.0)+forward*reach+Vector2(0,-lift)
-	var offhand = Vector2(-5.2,9.5)+Vector2(cycle*2,0)
-	aim_limb(arms[1],forearms[1],hand,ARM,WRIST,1.0)
+	var hand = Vector2(2.9*side,5.0)+forward*reach+Vector2(0,-lift)
+	var offhand = Vector2(-5.2*side,9.5)+Vector2(cycle*2,0)
+	arms[1].position = Vector2(5.9*side,0)
+	arms[0].position = Vector2(-5.9*side,-1.3*(1.0-absf(side)))
+	aim_limb(arms[1],forearms[1],hand,ARM,WRIST,side)
 	if weapon=="axe":
-		offhand = Vector2(-4,6)+direction*(6.3 if not activity.is_empty() else 2.4)
+		offhand = Vector2(-4*side,6)+direction*(6.3 if not activity.is_empty() else 2.4)
 	elif weapon=="bow":
 		var drawn = not activity.is_empty() and activity.step<activity.impact
-		assign_cell(tool,gear_cell("bow_drawn" if drawn else "bow"))
+		if drawn!=bent_bow.visible:
+			blade.visible = not drawn
+			bent_bow.visible = drawn
 		arrow.visible = drawn
 		var grip = core.to_local(forearms[1].to_global(Vector2(0,WRIST)))
 		offhand = grip-forward*(14.0 if drawn else 6.2)
 	elif weapon=="spear":
 		offhand = hand-forward*11
-	aim_limb(arms[0],forearms[0],offhand,ARM,WRIST,-1.0)
-	tool.rotation = angle-arms[1].rotation-forearms[1].rotation
+	aim_limb(arms[0],forearms[0],offhand,ARM,WRIST,-side)
+	tool.rotation = angle-core.rotation-arms[1].rotation-forearms[1].rotation
 	if guard!=null:
 		guard.rotation = -arms[0].rotation-forearms[0].rotation+direction.x*0.2
 	if arrow!=null:
-		arrow.rotation = angle-arms[0].rotation-forearms[0].rotation
+		arrow.rotation = angle-core.rotation-arms[0].rotation-forearms[0].rotation

@@ -25,9 +25,43 @@ func _initialize() -> void:
 	if diffuse.save_png(output.path_join("pigments.png"))!=OK or normals.save_png(output.path_join("normals.png"))!=OK:
 		quit(4)
 		return
-	print("Diffuse and normal atlas ",diffuse.get_size())
+	var contours = FileAccess.open(output.path_join("contours.json"),FileAccess.WRITE)
+	if contours==null:
+		quit(5)
+		return
+	contours.store_line(JSON.stringify(build_contours(diffuse)))
+	print("Diffuse, normal and padded alpha contours ",diffuse.get_size())
 	quit()
 
 func height_at(plate: Image, x: int, y: int) -> float:
 	var value = plate.get_pixel(x,y)
 	return lerpf(0.46,value.r,value.a)
+
+func build_contours(diffuse: Image) -> Array:
+	const TILE = 192
+	const BLOCK = 4
+	const GUTTER = 2
+	var atlas := []
+	for index in 119:
+		var origin = Vector2i(index%12,floori(index/12.0))*TILE
+		var corners := PackedVector2Array()
+		for y in range(0,TILE,BLOCK):
+			for x in range(0,TILE,BLOCK):
+				var occupied := false
+				for row in range(y,y+BLOCK):
+					for col in range(x,x+BLOCK):
+						if diffuse.get_pixel(origin.x+col,origin.y+row).a>0.0:
+							occupied = true
+							break
+					if occupied: break
+				if not occupied: continue
+				var block = Rect2(Vector2(x,y),Vector2(BLOCK,BLOCK)).grow(GUTTER)
+				corners.append_array(PackedVector2Array([block.position,Vector2(block.end.x,block.position.y),
+					block.end,Vector2(block.position.x,block.end.y)]))
+		var hull = Geometry2D.convex_hull(corners)
+		hull.resize(hull.size()-1) # Geometry2D repeats the first point at the end.
+		var points := []
+		for point in hull:
+			points.append_array([int(point.x),int(point.y)])
+		atlas.append(points)
+	return atlas

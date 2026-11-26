@@ -6,6 +6,10 @@ const Figure = preload("res://battle_figure.gd")
 const SITES = [Vector2(116,265),Vector2(179,193),Vector2(485,160),Vector2(339,149),Vector2(502,246)]
 const NAMES = ["한중","관중 · 삼진","팽성","형양 · 성고","해하"]
 const MAP = Vector2(640,374)
+const FILL_ENTER = 118.0
+const FILL_LEAVE = 138.0
+const FILL_OFFSET = Vector2(-20,-29)
+const FIGURE_CENTER = Vector2(0,-26)
 const INK = Color("1e1714")
 const TEXT_COLOR = Color("f4e6c8")
 const GOLD = Color("e3ad5e")
@@ -30,6 +34,7 @@ var warm_light: PointLight2D
 var actors: Dictionary = {}
 var actor_count := 0
 var bow_origins: Dictionary = {}
+static var unlit: CanvasItemMaterial
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -42,8 +47,9 @@ func _ready() -> void:
 	figures.name = "PaintedCompany"
 	figures.hide()
 	add_child(figures)
-	var unlit = CanvasItemMaterial.new()
-	unlit.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+	if unlit==null:
+		unlit = CanvasItemMaterial.new()
+		unlit.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
 	material = unlit
 	overlay = Node2D.new()
 	overlay.material = unlit
@@ -60,7 +66,8 @@ func _ready() -> void:
 	# DirectionalLight2D ignores item masks, so use a wide masked key and a small warm fill.
 	key_light = figure_light(lamp,16.0,0.26,195.0,Color("e4dbcd"))
 	key_light.position = Vector2(265,95)
-	warm_light = figure_light(lamp,4.4,0.22,68.0,Color("eac890"))
+	warm_light = figure_light(lamp,2.5,0.22,68.0,Color("eac890"))
+	warm_light.range_item_cull_mask = Figure.FILL_MASK
 
 func figure_light(lamp: Texture2D, span: float, energy: float, height: float, tint: Color) -> PointLight2D:
 	var light = PointLight2D.new()
@@ -93,6 +100,9 @@ func sync_figures() -> void:
 	var bodies = game.alive(game.team)+game.alive(game.foes)
 	bodies.sort_custom(func(a,b): return a.uid<b.uid if is_equal_approx(a.p.y,b.p.y) else a.p.y<b.p.y)
 	var seen: Dictionary = {}
+	var focus: Vector2 = Vector2(318,194) if reduce_motion else game.team[0].p
+	var warm_center = focus+FILL_OFFSET
+	var arena = Rect2(Vector2.ZERO,MAP)
 	for index in bodies.size():
 		var unit: Dictionary = bodies[index]
 		seen[unit.uid] = true
@@ -105,13 +115,17 @@ func sync_figures() -> void:
 		rig.position = unit.p
 		rig.set_rank(index)
 		rig.present(unit,reduce_motion,unit.id=="liu" and game.dodge_left>0)
+		var priority: bool = not unit.side or unit.id in ["captain","fiction"]
+		var radius = FILL_LEAVE if rig.has_fill else FILL_ENTER
+		var visibility = arena.grow(8.0) if rig.has_fill else arena
+		rig.set_fill(priority and visibility.has_point(unit.p) and (Vector2(unit.p)+FIGURE_CENTER).distance_squared_to(warm_center)<=radius*radius)
 	for uid in actors.keys():
 		if not seen.has(uid):
 			actors[uid].hide()
 			actors[uid].queue_free()
 			actors.erase(uid)
 	actor_count = bodies.size()
-	warm_light.position = Vector2(272,131) if reduce_motion else game.team[0].p+Vector2(-46,-63)
+	if warm_light.position!=warm_center: warm_light.position = warm_center
 	var flying := {}
 	for arrow in game.strikes:
 		flying[arrow.attack_id] = true
