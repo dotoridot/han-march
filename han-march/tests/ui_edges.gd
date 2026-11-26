@@ -253,6 +253,9 @@ func order_edges() -> void:
 		var state: Dictionary = saved.get_value("checkpoint","state",{}) if saved_ok else {}
 		var promoted: bool = example[1]=="promote"
 		var outcome = "조참 승급 확정" if promoted else "조참 중복, 보급 전환 확정"
+		if not root.get_visible_rect().encloses(ui.map_prompt.get_global_rect()) or not root.get_visible_rect().encloses(ui.primary_button.get_global_rect()):
+			push_error("The confirmed result must leave the map controls and prompt visible")
+			status = 1
 		if "18면 대길" not in camp_labels() or outcome not in camp_labels() or ui.audio_sequence!=0:
 			push_error("Confirmed result must identify both 18 and its saved outcome while muted")
 			status = 1

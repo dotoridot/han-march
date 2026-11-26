@@ -373,21 +373,21 @@ func map_view(reveal_draft: bool) -> void:
 	var orders: Array = game.names_upgrades["liu"]
 	var headline = row(screen_body)
 	words(headline,"%s  /  %s" % [data.year,data.name],23,GOLD)
-	headline.add_spacer(false)
-	words(headline,"보급 %d   ·   시드 %d" % [game.supply,game.seed_value],15,SUBTLE)
 	if not confirmed_draft.is_empty():
-		var result = row(screen_body)
+		var result = row(headline,4)
 		dice_view = FeatureModel.new()
 		dice_view.seal = false
 		dice_view.reduced = motion_reduced
-		dice_view.custom_minimum_size = Vector2(86,80)
+		dice_view.custom_minimum_size = Vector2(58,55)
 		result.add_child(dice_view)
 		dice_view.set_face(confirmed_draft.face,reveal_draft,confirmed_draft.color)
 		var details = column(result,2)
 		details.size_flags_horizontal = SIZE_EXPAND_FILL
 		details.alignment = BoxContainer.ALIGNMENT_CENTER
-		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,16,GOLD,true)
-		words(details,confirmed_draft.text,17,confirmed_draft.color,true)
+		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,15,GOLD)
+		words(details,confirmed_draft.text,16,confirmed_draft.color)
+	headline.add_spacer(false)
+	words(headline,"보급 %d   ·   시드 %d" % [game.supply,game.seed_value],15,SUBTLE)
 	note_dialogue(screen_body,data.id)
 	var choices = row(screen_body)
 	for i in data.routes.size():
@@ -513,7 +513,7 @@ func camp_view(reveal_draft: bool) -> void:
 			var other: Array = routes[1-i]
 			note = "%s %s" % [force,"적음" if route[4]<other[4] else "많음"]
 		route_notes.append("%s (%s)" % [route[0],note])
-	words(screen_body,"경유지 선택 전 / %s. 지형 효과는 선택에 따라 달라집니다." % ", ".join(route_notes),14,SUBTLE,true)
+	words(screen_body,"경유지 선택 전 / %s. 지형은 경유지에 따라 달라집니다." % ", ".join(route_notes),14,SUBTLE,true)
 	var reward_notes = {}
 	if game.golden_refund():
 		var id: String = game.draft_candidate
