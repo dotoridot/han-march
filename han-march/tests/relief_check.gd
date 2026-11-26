@@ -91,7 +91,7 @@ func map_keyboard(window_size: Vector2i) -> void:
 			app.game.battle_seed==preview.seed,"Enter departs on the focused card with its forecast seed and supply")
 
 func map_orders_layout(window_size: Vector2i) -> void:
-	for input in ["nameplate","flag","keyboard","compact-nameplate"]:
+	for input in ["nameplate","flag","keyboard","compact-nameplate","badges"]:
 		app.game.new_run(57,"fiction")
 		app.march_at = Relief.TRAILS[0][0]
 		app.show_phase()
@@ -109,8 +109,9 @@ func map_orders_layout(window_size: Vector2i) -> void:
 		expect(app.game.phase=="map" and app.game.chapter==2 and app.game.supply==1 and app.game.ration_hero=="xiao" and
 			"last_stand" in app.game.names_upgrades["liu"] and "ration_cycle" in app.game.names_upgrades["liu"] and
 			"승급 확정" in app.confirmed_draft.get("text",""),"The seed 57 campaign reaches Xingyang with both orders")
-		if input=="compact-nameplate":
-			app.confirmed_draft.text = "조참 중복, 보급 전환 확정 / 황금 눈으로 추가 보급, 보급 상한을 적용했습니다."
+		if input in ["compact-nameplate","badges"]:
+			app.confirmed_draft = {"face":18,"kind":"환전","text":"조참 중복, 보급 전환 확정 / 황금 눈으로 추가 보급, 보급 상한을 적용했습니다.",
+				"color":Color("e5b75d")}
 			app.show_phase()
 			await process_frame
 			await process_frame
@@ -121,6 +122,9 @@ func map_orders_layout(window_size: Vector2i) -> void:
 			expect(root.get_visible_rect().encloses(flag) and flag.encloses(label) and
 				not flag.intersects(app.map_choices[i].get_global_rect()),
 				"The complete flag and nameplate fit above the card at %s, route %d" % [window_size,i])
+		if input=="badges":
+			await map_badge_details(window_size)
+			continue
 		var route = 0 if input.ends_with("nameplate") else 1
 		var preview: Dictionary = app.game.preview_route(route)
 		if input=="keyboard":
@@ -135,6 +139,79 @@ func map_orders_layout(window_size: Vector2i) -> void:
 			click_map(map.nameplates[route].get_global_rect().get_center())
 		expect(app.game.phase=="travel" and app.game.selected_route==route and app.game.battle_seed==preview.seed,
 			"The %s inputs launch the forecast route at %s" % [input,window_size])
+
+func map_badge_details(window_size: Vector2i) -> void:
+	var badges: Array[Button] = []
+	for button in app.screen_body.find_children("*","Button",true,false):
+		if button.accessibility_name in ["대길 환전","군량 순환 군령","배수진 군령"]:
+			badges.append(button)
+	expect(badges.size()==3,"Draft outcome and both orders have separate compact controls at %s" % window_size)
+	if badges.size()!=3:
+		return
+	var copy = ["등용 확정 / 18면 대길 / 조참 중복, 보급 전환 확정",
+		"군령 / 군량 순환 / 소하 최대 및 시작 MP +4","군령 / 배수진 / 공격 피해 +30%, 특기 대기 -25% / 성고 산등성이"]
+	var mouse = InputEventMouseMotion.new()
+	for i in badges.size():
+		var badge := badges[i]
+		var detail_text := badge.accessibility_description
+		expect(detail_text.begins_with(copy[i]),"The badge identifies its outcome or affected route")
+		var preview: Label
+		var collapsed := true
+		for label in app.screen_body.find_children("*","Label",true,false):
+			if label.text==detail_text and label.is_visible_in_tree():
+				collapsed = false
+		expect(collapsed,"Unused details start collapsed")
+		mouse.position = badge.get_global_rect().get_center()
+		root.push_input(mouse)
+		await process_frame
+		await process_frame
+		for label in app.screen_body.find_children("*","Label",true,false):
+			if label.text==detail_text and label.is_visible_in_tree():
+				preview = label
+		expect(is_instance_valid(preview) and preview.is_visible_in_tree() and preview.text==detail_text and
+			preview.get_visible_line_count()==preview.get_line_count(),"Hover presents the whole accessible description")
+		if is_instance_valid(preview):
+			var detail_rect: Rect2 = preview.get_parent().get_global_rect()
+			expect(root.get_visible_rect().encloses(detail_rect),"Expanded detail fits in the window")
+			for flag in app.mounted_map.flags:
+				expect(not flag.get_global_rect().intersects(detail_rect) and
+					not flag.get_global_rect().intersects(badge.get_global_rect()),"Badge and preview leave the flag target clear")
+			mouse.position = Vector2(badge.get_global_rect().get_center().x,detail_rect.position.y+2)
+			root.push_input(mouse)
+			await process_frame
+			expect(preview.is_visible_in_tree(),"The description stays visible under the pointer")
+		mouse.position = Vector2(8,8)
+		root.push_input(mouse)
+		await process_frame
+		expect(not is_instance_valid(preview) or not preview.is_visible_in_tree(),"Leaving a hovered badge collapses the detail")
+
+	var hovered := badges[1]
+	mouse.position = hovered.get_global_rect().get_center()
+	root.push_input(mouse)
+	for step in 7:
+		if badges[0].has_focus(): break
+		tap(KEY_TAB)
+		await process_frame
+	expect(badges[0].has_focus(),"Tab reaches the result badge while the pointer is on an order")
+	tap(KEY_ENTER)
+	await process_frame
+	var visible_details: Array[String] = []
+	for label in app.screen_body.find_children("*","Label",true,false):
+		if label.is_visible_in_tree():
+			visible_details.append(label.text)
+	expect(badges[0].accessibility_description in visible_details,"Keyboard and pointer show the same result text")
+	tap(KEY_ESCAPE)
+	await process_frame
+	expect(app.modal_active,"Escape from a badge still opens the menu")
+	tap(KEY_ESCAPE)
+	await process_frame
+	expect(badges[0].has_focus(),"Closing the menu restores keyboard focus to the badge")
+	click_map(badges[2].get_global_rect().get_center())
+	await process_frame
+	expect(badges[2].has_focus() and app.game.phase=="map" and app.game.supply==1,
+		"Clicking an order focuses its details without departing or spending supply")
+	mouse.position = Vector2(8,8)
+	root.push_input(mouse)
 
 func map_layout() -> void:
 	app.game.new_run(12345,"history")
