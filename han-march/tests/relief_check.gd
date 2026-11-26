@@ -90,6 +90,52 @@ func map_keyboard(window_size: Vector2i) -> void:
 		expect(app.game.phase=="travel" and app.game.selected_route==1 and app.game.supply==supply+2 and
 			app.game.battle_seed==preview.seed,"Enter departs on the focused card with its forecast seed and supply")
 
+func map_orders_layout(window_size: Vector2i) -> void:
+	for input in ["nameplate","flag","keyboard","compact-nameplate"]:
+		app.game.new_run(57,"fiction")
+		app.march_at = Relief.TRAILS[0][0]
+		app.show_phase()
+		for chapter in 2:
+			app.choose_route(1-chapter)
+			app.complete_travel()
+			app.game.finish_battle(true)
+			app.show_phase()
+			app.change_odds("shield")
+			app.perform_roll()
+			app.choose_draft_resolution("promote")
+			app.choose_perk("last_stand" if chapter==0 else "ration_cycle")
+			await process_frame
+			await process_frame
+		expect(app.game.phase=="map" and app.game.chapter==2 and app.game.supply==1 and app.game.ration_hero=="xiao" and
+			"last_stand" in app.game.names_upgrades["liu"] and "ration_cycle" in app.game.names_upgrades["liu"] and
+			"승급 확정" in app.confirmed_draft.get("text",""),"The seed 57 campaign reaches Xingyang with both orders")
+		if input=="compact-nameplate":
+			app.confirmed_draft.text = "조참 중복, 보급 전환 확정 / 황금 눈으로 추가 보급, 보급 상한을 적용했습니다."
+			app.show_phase()
+			await process_frame
+			await process_frame
+		var map = app.mounted_map
+		for i in map.flags.size():
+			var flag: Rect2 = map.flags[i].get_global_rect()
+			var label: Rect2 = map.nameplates[i].get_global_rect()
+			expect(root.get_visible_rect().encloses(flag) and flag.encloses(label) and
+				not flag.intersects(app.map_choices[i].get_global_rect()),
+				"The complete flag and nameplate fit above the card at %s, route %d" % [window_size,i])
+		var route = 0 if input.ends_with("nameplate") else 1
+		var preview: Dictionary = app.game.preview_route(route)
+		if input=="keyboard":
+			expect(app.map_choices[0].has_focus(),"The first card starts focused with both orders")
+			tap(KEY_TAB)
+			expect(app.map_choices[1].has_focus(),"Tab reaches the second card with both orders")
+			tap(KEY_ENTER)
+		elif input=="flag":
+			var rect: Rect2 = map.flags[route].get_global_rect()
+			click_map(Vector2(rect.get_center().x+8,rect.position.y+12))
+		else:
+			click_map(map.nameplates[route].get_global_rect().get_center())
+		expect(app.game.phase=="travel" and app.game.selected_route==route and app.game.battle_seed==preview.seed,
+			"The %s inputs launch the forecast route at %s" % [input,window_size])
+
 func map_layout() -> void:
 	app.game.new_run(12345,"history")
 	app.show_phase()
@@ -105,6 +151,7 @@ func map_layout() -> void:
 		app.text_zoom = 1.18 if window_size.x==760 else 1.0
 		app.build_theme()
 		await map_keyboard(window_size)
+		await map_orders_layout(window_size)
 		for chapter in 4:
 			for route in 2:
 				app.game.new_run(12345,"fiction" if chapter==3 else "history")

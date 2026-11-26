@@ -22,6 +22,8 @@ const REGIONS = [
 ]
 const RIDER = preload("res://assets/strategy_rider.svg")
 const FLAG = preload("res://assets/strategy_flag.svg")
+const FLAG_OFFSET = Vector2(-16,-49)
+const FLAG_SIZE = Vector2(53,51)
 const VILLAGE = preload("res://assets/strategy_village.svg")
 const INK = Color("292522")
 const PAPER = Color("f4ecdc")
@@ -103,7 +105,7 @@ func setup(index: int, routes: Array, supply: int, zoom: float, selection: int) 
 
 func map_pixel(at: Vector2) -> Vector2:
 	var top = maxf(size.y*0.3116,route_area.x)
-	var bottom = minf(size.y*0.6612,route_area.y) if route_area.y>0.0 else size.y*0.6612
+	var bottom = minf(size.y*0.6612,route_area.y-18.0) if route_area.y>0.0 else size.y*0.6612
 	var height = maxf(bottom-top,36.0)
 	var south = clampf(at.x/4.7,0,1)*height*0.20 if chapter==3 else 0.0
 	return Vector2((0.5+at.x*0.066)*size.x,top+(at.y+3.4)/7.6*height+south)
@@ -115,14 +117,25 @@ func fit_routes(top: float, bottom: float) -> void:
 		layout_flags()
 
 func layout_flags() -> void:
+	var compact = false
+	for index in flags.size():
+		var marker = map_pixel(TRAILS[index][-1])
+		if route_area.y>0 and marker.y+nameplates[index].get_minimum_size().y>route_area.y-4:
+			compact = true
 	for index in flags.size():
 		var flag = flags[index]
 		var label = nameplates[index]
 		var label_size = label.get_minimum_size()
-		var width = maxf(72.0,label_size.x)
-		flag.size = Vector2(width,46.0+label_size.y)
-		flag.position = map_pixel(TRAILS[index][-1])-Vector2(width*0.5,46)
-		label.position = Vector2((width-label_size.x)*0.5,46)
+		var marker = map_pixel(TRAILS[index][-1])
+		var art = Rect2(marker+FLAG_OFFSET,FLAG_SIZE)
+		var label_at = marker-Vector2(label_size.x*0.5,0)
+		if compact:
+			var x = art.end.x+3 if index==0 else art.position.x-label_size.x-3
+			label_at = Vector2(x,art.position.y+5)
+		var bounds = art.merge(Rect2(label_at,label_size))
+		flag.position = bounds.position
+		flag.size = bounds.size
+		label.position = label_at-bounds.position
 		label.size = label_size
 	queue_redraw()
 
@@ -166,7 +179,7 @@ func _draw() -> void:
 			draw_circle(marker,14,rim,true,-1,true)
 			draw_circle(marker,9,INK,true,-1,true)
 		var tint = Color("a6978d") if flags[index].disabled and selected_route<0 else Color.WHITE
-		draw_texture_rect(FLAG,Rect2(marker+Vector2(-16,-49),Vector2(53,51)),false,tint)
+		draw_texture_rect(FLAG,Rect2(marker+FLAG_OFFSET,FLAG_SIZE),false,tint)
 		if selected_route==index:
 			draw_circle(marker,5,GOLD,true,-1,true)
 	var base = map_pixel(point)

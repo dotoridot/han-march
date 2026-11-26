@@ -442,7 +442,8 @@ func map_view(reveal_draft: bool) -> void:
 	var data: Dictionary = game.entry()
 	var orders: Array = game.names_upgrades["liu"]
 	map_header(data)
-	var upper = row(screen_body,12)
+	var briefing = column(screen_body,4)
+	var upper = row(briefing,12)
 	var notes = PanelContainer.new()
 	notes.add_theme_stylebox_override("panel",skin(MAP_INK,6))
 	var has_draft = not confirmed_draft.is_empty()
@@ -457,9 +458,6 @@ func map_view(reveal_draft: bool) -> void:
 	words(story,"유방의 군세 / %s" % "  ".join(names),14,PAPER,true)
 	note_dialogue(story,data.id,14 if has_draft else 16)
 	upper.add_spacer(false)
-	if not game.ration_hero.is_empty():
-		words(story,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" %
-			Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
 	if has_draft:
 		var panel = PanelContainer.new()
 		panel.add_theme_stylebox_override("panel",skin(MAP_INK,7))
@@ -479,6 +477,13 @@ func map_view(reveal_draft: bool) -> void:
 		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,15,GOLD,true)
 		words(details,confirmed_draft.text,16,confirmed_draft.color,true)
 
+	if not game.ration_hero.is_empty():
+		var ration = PanelContainer.new()
+		ration.add_theme_stylebox_override("panel",skin(MAP_INK,4))
+		briefing.add_child(ration)
+		words(ration,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" %
+			Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
+
 	screen_body.add_spacer(false).mouse_filter = MOUSE_FILTER_IGNORE
 	var choices = row(screen_body,12)
 	map_choices.clear()
@@ -497,7 +502,9 @@ func map_view(reveal_draft: bool) -> void:
 		for edge in ["margin_left","margin_right","margin_top","margin_bottom"]:
 			content.add_theme_constant_override(edge,10)
 		full(b,content)
-		var card = row(content,8)
+		var card_content = column(content,2)
+		card_content.mouse_filter = MOUSE_FILTER_IGNORE
+		var card = row(card_content,8)
 		card.mouse_filter = MOUSE_FILTER_IGNORE
 		var icon = TextureRect.new()
 		var route_icon = AtlasTexture.new()
@@ -520,7 +527,7 @@ func map_view(reveal_draft: bool) -> void:
 		words(details,summary,14,GOLD,true)
 		words(details,path[1],14,MAP_SECONDARY,true)
 		if "last_stand" in orders and game.supply+path[3]==0:
-			words(details,"배수진 적용 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
+			words(card_content,"배수진 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
 		b.accessibility_name = title.text
 		b.accessibility_description = "%s / %s" % [summary,path[1]]
 		content.minimum_size_changed.connect(func(): b.custom_minimum_size = content.get_combined_minimum_size())
@@ -538,14 +545,14 @@ func map_view(reveal_draft: bool) -> void:
 	map_prompt = words(help,"",14,PAPER,true)
 	map_prompt_index = -2
 	refresh_map_prompt(mounted_map.nearby)
-	var fit = fit_map_routes.bind(upper,choices)
-	upper.item_rect_changed.connect(fit.call_deferred)
+	var fit = fit_map_routes.bind(briefing,choices)
+	briefing.item_rect_changed.connect(fit.call_deferred)
 	choices.item_rect_changed.connect(fit.call_deferred)
 	fit.call_deferred()
 
-func fit_map_routes(upper: Control, choices: Control) -> void:
-	if game.phase=="map" and is_instance_valid(upper) and upper.is_inside_tree() and choices.is_inside_tree():
-		mounted_map.fit_routes(upper.get_global_rect().end.y+54,choices.global_position.y-18)
+func fit_map_routes(briefing: Control, choices: Control) -> void:
+	if game.phase=="map" and is_instance_valid(briefing) and briefing.is_inside_tree() and choices.is_inside_tree():
+		mounted_map.fit_routes(briefing.get_global_rect().end.y+54,choices.global_position.y)
 
 func set_map_hover(index: int) -> void:
 	mounted_map.hovered_route = index
