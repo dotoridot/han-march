@@ -31,6 +31,7 @@ var map_prompt: Label
 var map_overlay: MarginContainer
 var map_choices: Array[Button] = []
 var map_prompt_index := -2
+var dismiss_map_detail: Callable
 var skill_status: Label
 var confirmed_draft: Dictionary = {}
 var draft_resolution := ""
@@ -292,6 +293,7 @@ func note_dialogue(parent: Control, key: String, size_px := 16) -> void:
 
 func show_phase(reveal_draft := false) -> void:
 	var old_phase = announced_phase
+	dismiss_map_detail = Callable()
 	empty(screen_body)
 	announced_phase = game.phase
 	if game.phase!="camp" or old_phase!="camp":
@@ -443,11 +445,11 @@ func map_view(reveal_draft: bool) -> void:
 	var orders: Array = game.names_upgrades["liu"]
 	map_header(data)
 	var briefing = column(screen_body,4)
-	var upper = row(briefing,12)
+	var upper = row(briefing,8)
+	upper.mouse_filter = MOUSE_FILTER_IGNORE
+	briefing.mouse_filter = MOUSE_FILTER_IGNORE
 	var notes = PanelContainer.new()
-	notes.add_theme_stylebox_override("panel",skin(MAP_INK,6))
-	var has_draft = not confirmed_draft.is_empty()
-	notes.custom_minimum_size.x = 348 if has_draft else 380
+	notes.add_theme_stylebox_override("panel",skin(Color("283737ed"),6))
 	notes.size_flags_vertical = SIZE_SHRINK_BEGIN
 	upper.add_child(notes)
 	var story = column(notes,1)
@@ -456,33 +458,121 @@ func map_view(reveal_draft: bool) -> void:
 	for hero in game.hero_keys:
 		names.append(Campaign.HEROES[hero][0])
 	words(story,"유방의 군세 / %s" % "  ".join(names),14,PAPER,true)
-	note_dialogue(story,data.id,14 if has_draft else 16)
-	upper.add_spacer(false)
-	if has_draft:
-		var panel = PanelContainer.new()
-		panel.add_theme_stylebox_override("panel",skin(MAP_INK,7))
-		panel.custom_minimum_size.x = 350
-		panel.size_flags_vertical = SIZE_SHRINK_BEGIN
-		upper.add_child(panel)
-		var result = row(panel,6)
-		dice_view = FeatureModel.new()
-		dice_view.seal = false
-		dice_view.reduced = motion_reduced
-		dice_view.custom_minimum_size = Vector2(56,52)
-		result.add_child(dice_view)
-		dice_view.set_face(confirmed_draft.face,reveal_draft,confirmed_draft.color)
-		var details = column(result,2)
-		details.size_flags_horizontal = SIZE_EXPAND_FILL
-		details.alignment = BoxContainer.ALIGNMENT_CENTER
-		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,15,GOLD,true)
-		words(details,confirmed_draft.text,16,confirmed_draft.color,true)
+	note_dialogue(story,data.id,14 if not confirmed_draft.is_empty() else 16)
+	upper.add_spacer(false).mouse_filter = MOUSE_FILTER_IGNORE
 
+	var badges: Array[Dictionary] = []
+	if not confirmed_draft.is_empty():
+		var roll = "18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face
+		var short_roll = "대길" if confirmed_draft.face==18 else "등용"
+		badges.append({"draft":true,"title":"%s %s" % [short_roll,confirmed_draft.get("kind","결과")],
+			"detail":"등용 확정 / %s / %s" % [roll,confirmed_draft.text]})
 	if not game.ration_hero.is_empty():
-		var ration = PanelContainer.new()
-		ration.add_theme_stylebox_override("panel",skin(MAP_INK,4))
-		briefing.add_child(ration)
-		words(ration,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" %
-			Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
+		badges.append({"title":"군량 순환","detail":"군령 / 군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" %
+			Campaign.HEROES[game.ration_hero][0]})
+	var last_stand_routes: Array[String] = []
+	if "last_stand" in orders:
+		for path in data.routes:
+			if game.supply+path[3]==0:
+				last_stand_routes.append(path[0])
+	var last_stand_effect = "배수진 / 공격 피해 +30%, 특기 대기 -25%"
+	if not last_stand_routes.is_empty():
+		badges.append({"title":"배수진","detail":"군령 / %s / %s" %
+			[last_stand_effect,", ".join(last_stand_routes)]})
+
+	notes.custom_minimum_size.x = 380 if badges.is_empty() else 310
+	if not badges.is_empty():
+		var status = column(upper,0)
+		status.mouse_filter = MOUSE_FILTER_IGNORE
+		status.size_flags_vertical = SIZE_SHRINK_BEGIN
+		var controls = row(status,4)
+		controls.mouse_filter = MOUSE_FILTER_IGNORE
+		controls.alignment = BoxContainer.ALIGNMENT_END
+		var preview_panel = PanelContainer.new()
+		preview_panel.mouse_filter = MOUSE_FILTER_PASS
+		preview_panel.add_theme_stylebox_override("panel",skin(Color("efe2c5"),6))
+		status.add_child(preview_panel)
+		var preview = words(preview_panel,"",14,Color("283737"),true)
+		preview.mouse_filter = MOUSE_FILTER_IGNORE
+		preview_panel.hide()
+		var buttons: Array[Button] = []
+		var dismissed: Array[Button] = []
+		var modal_focus: Array[Button] = []
+		var refresh_detail = func(prefer_hover: bool):
+			if not is_instance_valid(preview) or not preview.is_inside_tree(): return
+			var hovered := get_viewport().gui_get_hovered_control() if prefer_hover else null
+			if hovered==preview_panel: return
+			var current := hovered as Button
+			if current not in buttons:
+				current = get_viewport().gui_get_focus_owner() as Button
+			preview_panel.visible = current in buttons and current not in dismissed
+			if preview_panel.visible:
+				preview.text = current.accessibility_description
+		var dismiss_detail = func() -> bool:
+			if not is_instance_valid(preview_panel) or not preview_panel.is_visible_in_tree(): return false
+			for button in buttons:
+				if preview.text==button.accessibility_description:
+					dismissed.assign([button])
+					var focused := get_viewport().gui_get_focus_owner() as Button
+					if focused in buttons and focused!=button:
+						dismissed.append(focused)
+					preview_panel.hide()
+					return true
+			return false
+		dismiss_map_detail = dismiss_detail
+		var toggle_detail = func():
+			var focused := get_viewport().gui_get_focus_owner() as Button
+			if focused not in buttons: return
+			if preview_panel.visible and preview.text==focused.accessibility_description:
+				dismiss_detail.call()
+			else:
+				dismissed.erase(focused)
+				refresh_detail.call(false)
+		preview_panel.mouse_exited.connect(func(): refresh_detail.call_deferred(true))
+		for badge in badges:
+			var draft: bool = badge.get("draft",false)
+			var button = action(controls,badge.title,toggle_detail)
+			button.accessibility_name = badge.title if draft else "%s 군령" % badge.title
+			button.accessibility_description = badge.detail
+			button.add_theme_font_size_override("font_size",roundi(14*text_zoom))
+			button.custom_minimum_size.y = 36
+			button.mouse_default_cursor_shape = CURSOR_POINTING_HAND
+			for state in [["normal","654039" if draft else "344748"],["hover","873d31"],["pressed","a13b2c"]]:
+				var surface = skin(Color(state[1]),5)
+				surface.content_margin_left = 33
+				surface.content_margin_right = 8
+				button.add_theme_stylebox_override(state[0],surface)
+			if draft:
+				dice_view = FeatureModel.new()
+				dice_view.seal = false
+				dice_view.reduced = motion_reduced
+				button.add_child(dice_view)
+				dice_view.position = Vector2(3,3)
+				dice_view.size = Vector2(29,27)
+				dice_view.mouse_filter = MOUSE_FILTER_IGNORE
+				dice_view.set_face(confirmed_draft.face,reveal_draft,confirmed_draft.color)
+			else:
+				var icon = TextureRect.new()
+				icon.texture = MountedMap.FLAG
+				icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				icon.mouse_filter = MOUSE_FILTER_IGNORE
+				button.add_child(icon)
+				icon.position = Vector2(4,4)
+				icon.size = Vector2(26,28)
+			buttons.append(button)
+			button.mouse_entered.connect(func():
+				dismissed.erase(button)
+				refresh_detail.call_deferred(true))
+			button.mouse_exited.connect(func(): refresh_detail.call_deferred(true))
+			button.focus_entered.connect(func():
+				if button not in modal_focus: dismissed.erase(button)
+				modal_focus.clear()
+				refresh_detail.call_deferred(false))
+			button.focus_exited.connect(func():
+				if modal_active: modal_focus.assign([button])
+				refresh_detail.call_deferred(false))
+		status.custom_minimum_size.x = maxf(300,controls.get_combined_minimum_size().x)
 
 	screen_body.add_spacer(false).mouse_filter = MOUSE_FILTER_IGNORE
 	var choices = row(screen_body,12)
@@ -526,10 +616,10 @@ func map_view(reveal_draft: bool) -> void:
 			forecast.weather,forecast.opponents,"(추격대 별도)" if game.chapter==1 else "",path[2]]
 		words(details,summary,14,GOLD,true)
 		words(details,path[1],14,MAP_SECONDARY,true)
-		if "last_stand" in orders and game.supply+path[3]==0:
-			words(card_content,"배수진 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
 		b.accessibility_name = title.text
 		b.accessibility_description = "%s / %s" % [summary,path[1]]
+		if path[0] in last_stand_routes:
+			b.accessibility_description += " / "+last_stand_effect
 		content.minimum_size_changed.connect(func(): b.custom_minimum_size = content.get_combined_minimum_size())
 		b.custom_minimum_size = content.get_combined_minimum_size()
 		b.mouse_entered.connect(set_map_hover.bind(i))
@@ -874,18 +964,21 @@ func choose_perk(id: String) -> void:
 		var face: int = before.draft_result.get_slice("면",0).to_int()
 		var hero: String = Campaign.HEROES[candidate][0]
 		var outcome = "%s 중복, 보급 전환 확정" % hero
+		var kind = "환전"
 		var color = PAPER
 		if candidate not in before.heroes:
 			outcome = "%s 합류 확정" % hero
+			kind = "합류"
 			color = RECRUIT_GREEN
 			play("recruit")
 		elif game.promotion_level(candidate)>before.promotions.get(candidate,0):
 			outcome = "%s 승급 확정 / %d단계" % [hero,game.promotion_level(candidate)]
+			kind = "승급"
 			color = PROMOTION_BLUE
 			play("promotion")
 		if face==18:
 			play("great_fortune")
-		confirmed_draft = {"face":face,"text":outcome,"color":color}
+		confirmed_draft = {"face":face,"kind":kind,"text":outcome,"color":color}
 	show_phase(not confirmed_draft.is_empty())
 
 func result_view() -> void:
@@ -1026,7 +1119,7 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			if modal_active:
 				close_modal()
-			else:
+			elif not (game.phase=="map" and dismiss_map_detail.is_valid() and dismiss_map_detail.call()):
 				show_menu()
 		elif game.phase=="map" and not modal_active and event.physical_keycode in [KEY_UP,KEY_DOWN,KEY_LEFT,KEY_RIGHT]:
 			get_viewport().set_input_as_handled()
