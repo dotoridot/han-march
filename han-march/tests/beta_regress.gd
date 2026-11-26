@@ -9,6 +9,10 @@ var cleared = 0
 var rolls = {}
 var trace_hash = 0
 var mode_route_pairs = {}
+var army_orders = 0
+var redirected_orders = 0
+var duplicate_recruits = 0
+var new_recruits = 0
 
 func _initialize() -> void:
 	call_deferred("verify")
@@ -59,12 +63,52 @@ func trial(seed_value: int, mode: String, route_mask: int) -> void:
 			game.roll()
 			expect(not game.redraw_reward(),"unlimited redraw",seed_value)
 		rolls[game.draft_candidate] = true
-		var candidate = game.hero_keys[(chapter+seed_value)%game.hero_keys.size()]
-		game.offer_for(candidate)
-		expect(game.offerings.size()==3 and game.offerings.any(func(p): return p.tag==Campaign.HEROES[candidate][2] or game.hero_keys.any(func(id): return Campaign.HEROES[id][2]==p.tag)),"tagged offer contract",seed_value)
-		var perk = game.offerings[(seed_value+chapter)%3].id
-		game.advance(perk,"supply" if game.draft_candidate in game.hero_keys else "")
-		expect(game.names_upgrades[candidate].has(perk),"perk not recorded",seed_value)
+		var focus = game.hero_keys[(chapter+seed_value)%game.hero_keys.size()]
+		game.offer_for(focus)
+		var offers = game.offerings.map(func(p): return p.id)
+		var orders = game.offerings.filter(func(p): return p.tag=="군령")
+		var tagged_first = not game.offerings.is_empty() and game.hero_keys.any(func(id): return Campaign.HEROES[id][2]==game.offerings[0].tag)
+		expect(offers.size()==3 and offers.all(func(id): return offers.count(id)==1) and tagged_first
+			and orders.size()<=1 and orders.all(func(p): return p.id not in game.names_upgrades["liu"]),"tagged offer contract",seed_value)
+		if offers.size()!=3:
+			break
+		var chosen = game.offerings[(seed_value+chapter)%3]
+		var perk: String = chosen.id
+		var recipient = "liu" if chosen.tag=="군령" else focus
+		if chosen.tag=="군령":
+			army_orders += 1
+			if focus!="liu":
+				redirected_orders += 1
+		var before = game.checkpoint()
+		var recruit: String = before.draft_candidate
+		var duplicate = recruit in before.heroes
+		var resolution = "supply" if duplicate else ""
+		var expected_perks = before.perks.duplicate(true)
+		var expected_heroes = before.heroes.duplicate()
+		var expected_supply = before.supply
+		expected_perks[recipient].append(perk)
+		if duplicate:
+			duplicate_recruits += 1
+			expected_supply += Campaign.DUPLICATE_SUPPLY
+		elif not recruit.is_empty():
+			new_recruits += 1
+			expected_heroes.append(recruit)
+			expected_perks[recruit] = []
+		if game.golden_refund():
+			expected_supply += 1
+		expected_supply = mini(expected_supply,Campaign.SUPPLY_CAP)
+		expect(replay.restore(before) and replay.checkpoint()==before and replay.offerings==game.offerings,
+			"camp restore changes pending recruit or offers",seed_value)
+		if duplicate:
+			expect(not replay.advance(perk) and replay.checkpoint()==before,"unresolved duplicate changed camp state",seed_value)
+		var advanced = game.advance(perk,resolution)
+		expect(advanced and game.names_upgrades==expected_perks,"perk not recorded exactly once for "+recipient,seed_value)
+		var after = game.checkpoint()
+		expect(game.hero_keys==expected_heroes and game.supply==expected_supply and game.promotions==before.promotions
+			and game.draft_candidate.is_empty() and game.phase=="map" and game.chapter==chapter+1
+			and after.streams==before.streams,"camp choice did not commit expected recruit and departure",seed_value)
+		expect(replay.advance(perk,resolution) and replay.checkpoint()==after and not replay.advance(perk,resolution)
+			and replay.checkpoint()==after,"replayed camp choice did not commit exactly once",seed_value)
 	game.clear_battle()
 	replay.clear_battle()
 	game.host.queue_free()
@@ -79,6 +123,7 @@ func verify() -> void:
 		var group = int(id/16.0) if cross_modes else id
 		trial(1000+id*7919,"history" if group%2==0 else "fiction",id%16)
 		await process_frame
-	print(JSON.stringify({"start":starting,"count":count,"checks":checks,"failed":failures,"founding":finished,"completed_intermediate":cleared,"drafts":rolls.keys(),"replay_digest":trace_hash,"mode_route_pairs":mode_route_pairs.size()}))
+	print(JSON.stringify({"start":starting,"count":count,"checks":checks,"failed":failures,"founding":finished,"completed_intermediate":cleared,"drafts":rolls.keys(),"replay_digest":trace_hash,"mode_route_pairs":mode_route_pairs.size(),
+		"army_orders":army_orders,"redirected_orders":redirected_orders,"duplicate_recruits":duplicate_recruits,"new_recruits":new_recruits}))
 	await process_frame
 	quit(1 if failures else 0)
