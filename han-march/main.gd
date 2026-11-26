@@ -498,10 +498,22 @@ func camp_view(reveal_draft: bool) -> void:
 	}[next_chapter]
 	words(screen_body,"%s %s" % [threat,next.description],14,PAPER,true)
 	var routes: Array = next.routes
-	var enemy_difference = "적이 적음" if routes[0][4]<routes[1][4] else "적이 많음"
-	var other_difference = "적이 많음" if routes[0][4]<routes[1][4] else "적이 적음"
-	words(screen_body,"경유지 선택 전 / %s (%s), %s (%s). 지형 효과는 선택에 따라 달라집니다." % [
-		routes[0][0],enemy_difference,routes[1][0],other_difference],14,SUBTLE,true)
+	var departure_supply: int = game.supply
+	var projected_draft: Dictionary = game.project_candidate(game.draft_candidate,draft_resolution)
+	if not projected_draft.is_empty():
+		departure_supply = projected_draft.supply_after
+	var route_notes: Array[String] = []
+	var force = "매복병이" if next_chapter==2 else "초기 적이"
+	for i in routes.size():
+		var route: Array = routes[i]
+		var note: String
+		if departure_supply+route[3]<0:
+			note = "보급 부족, %d 필요" % -route[3]
+		else:
+			var other: Array = routes[1-i]
+			note = "%s %s" % [force,"적음" if route[4]<other[4] else "많음"]
+		route_notes.append("%s (%s)" % [route[0],note])
+	words(screen_body,"경유지 선택 전 / %s. 지형 효과는 선택에 따라 달라집니다." % ", ".join(route_notes),14,SUBTLE,true)
 	var reward_notes = {}
 	if game.golden_refund():
 		var id: String = game.draft_candidate

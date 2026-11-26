@@ -30,12 +30,16 @@ func camp_edges() -> void:
 	ui.build_theme()
 	ui.complete_travel()
 	Pilot.pilot(ui.game,5000)
-	ui.show_phase()
 	if ui.game.phase!="camp":
 		push_error("Narrow-window run did not reach the first camp")
 		status = 1
 		return
 	var before: Dictionary = ui.game.checkpoint()
+	ui.show_phase()
+	if ui.game.checkpoint()!=before:
+		push_error("First camp forecast changed checkpoint or RNG state")
+		status = 1
+	ui.show_phase()
 	await snap("narrow-first-camp")
 	var table = camp_labels()
 	if "다음 전장 / 팽성" not in table or "추격병" not in table or "경유지 선택 전" not in table:
@@ -122,6 +126,43 @@ func camp_edges() -> void:
 	if ui.game.phase!="map" or ui.game.promotion_level("han")!=1 or ui.game.tactics.support!="royal_signal":
 		status = 1
 	print("Narrow camp 760x544 (118%): keyboard roll, mouse promotion choice, keyboard confirmation")
+	for supply in [0,1]:
+		var route_camp = before.duplicate(true)
+		route_camp.rolled = false
+		route_camp.draft_result = ""
+		route_camp.draft_candidate = ""
+		route_camp.supply = supply
+		ui.game.restore(route_camp)
+		ui.show_phase()
+		var can_depart: bool = supply==1
+		var forecast: String = camp_labels()
+		ui.choose_perk(ui.game.offerings[0].id)
+		var choice: Button = ui.primary_button
+		ui.choose_route(0)
+		var departed: bool = ui.game.phase=="battle" and ui.checkpoint_data.get("phase")=="travel"
+		if ("수변 나루 (보급 부족, 1 필요)" in forecast)==can_depart or ("수변 나루 (초기 적이 적음)" in forecast)!=can_depart or choice.disabled==can_depart or departed!=can_depart:
+			push_error("Camp, map and departure disagree on the ferry at supply %d" % supply)
+			status = 1
+		print("Ferry supply ",supply," / disabled ",choice.disabled," / departed ",departed)
+	var conversion = before.duplicate(true)
+	conversion.supply = 0
+	ui.game.restore(conversion)
+	ui.show_phase()
+	ui.choose_draft_resolution("supply")
+	var available: bool = "수변 나루 (초기 적이 적음)" in camp_labels()
+	ui.choose_perk(ui.game.offerings[0].id)
+	ui.choose_route(0)
+	if not available or ui.game.phase!="battle" or ui.game.supply!=1:
+		push_error("The ferry forecast must use supply from the pending conversion")
+		status = 1
+	print("Ferry projected conversion 0 → 2 / departure supply ",ui.game.supply)
+	var convoy = before.duplicate(true)
+	convoy.chapter = 1
+	ui.game.restore(convoy)
+	ui.show_phase()
+	if "오창 보급길 (매복병이 많음)" not in camp_labels() or "성고 산등성이 (매복병이 적음)" not in camp_labels():
+		push_error("The convoy forecast must describe the route-dependent ambush")
+		status = 1
 
 func order_edges() -> void:
 	ui.complete_travel()
@@ -223,7 +264,70 @@ func order_edges() -> void:
 			push_error("Saved supply, rank or RNG differs from the forecast")
 			status = 1
 	await ration_heal(camp)
+	if OS.get_environment("HAN_MARCH_FORECAST_AUDIO_TEST")=="1":
+		check_draft_audio(camp)
 	print("Orders UI ",root.size," / text scale ",ui.text_zoom," / result ",status)
+
+func check_draft_audio(camp: Dictionary) -> void:
+	if DisplayServer.get_name()!="headless" or AudioServer.get_driver_name()!="Dummy" or not AudioServer.is_bus_mute(0) or not OS.has_environment("HAN_MARCH_PROFILE"):
+		push_error("Draft audio probe requires a muted, isolated headless Dummy run")
+		status = 1
+		return
+	print("Draft audio driver: ",AudioServer.get_driver_name(),", initially muted")
+	AudioServer.set_bus_mute(0,false)
+	for example in [
+		[18,"cao","promote",["promotion","great_fortune"]],
+		[18,"cao","",["recruit","great_fortune"]],
+		[9,"han","",["recruit"]],
+		[1,"fan","promote",["promotion"]],
+		[18,"cao","supply",["great_fortune"]],
+	]:
+		for player in ui.audio_players:
+			player.stop()
+		var pending = camp.duplicate(true)
+		if example[2]=="":
+			pending.heroes.erase(example[1])
+			pending.perks.erase(example[1])
+		pending.rolled = true
+		pending.draft_candidate = example[1]
+		pending.draft_result = "%d면 / %s" % [example[0],Campaign.HEROES[example[1]][0]]
+		var first: int = ui.audio_sequence
+		var slot: int = ui.audio_next
+		ui.game.restore(pending)
+		ui.show_phase()
+		ui.perform_redraw()
+		ui.game.restore(pending)
+		ui.show_phase()
+		ui.choose_draft_resolution(example[2])
+		var path: String = ui.store_path
+		ui.store_path = path.path_join("unwritable.cfg")
+		var perk: String = ui.game.offerings[0].id
+		ui.choose_perk(perk)
+		if not ui.save_error or ui.audio_sequence!=first:
+			push_error("Pending, redrawn or failed draft played a cue")
+			status = 1
+		ui.store_path = path
+		ui.close_modal()
+		ui.choose_perk(perk)
+		var expected: Array = example[3]
+		var played: Array[String] = []
+		for i in expected.size():
+			var index = (slot+i)%4
+			var player: AudioStreamPlayer = ui.audio_players[index]
+			if player.playing and player.stream==ui.sounds.get(expected[i]) and ui.audio_started[index]==first+i+1:
+				played.append(expected[i])
+		if ui.game.phase!="map" or ui.audio_players.size()!=4 or ui.audio_sequence!=first+expected.size() or played!=expected:
+			push_error("Saved draft did not play each expected cue once in the four-slot pool")
+			status = 1
+		var committed: int = ui.audio_sequence
+		ui.choose_perk(perk)
+		ui.show_phase()
+		ui.continue_run()
+		if ui.audio_sequence!=committed:
+			push_error("Repeat confirmation, redraw or checkpoint resume replayed a saved cue")
+			status = 1
+		print("Draft audio ",example[0],"/",example[1],"/",example[2],": ",played," / first slot ",slot," / total ",ui.audio_sequence-first)
+	AudioServer.set_bus_mute(0,true)
 
 func check_reward_view(note: String, stage: String) -> void:
 	var focus: Control = root.gui_get_focus_owner()
@@ -321,7 +425,7 @@ func verify() -> void:
 	ui.continue_run()
 	await snap("narrow-reopened-checkpoint")
 	print("Reopen: ",ui.game.seed_value," / ",ui.game.selected_route," / ",ui.game.battle_seed)
-	if not clipped.is_empty() or state==ui.game.field_rng.state or serialized.board_seed!=ui.game.battle_seed or ui.game.seed_value!=12345:
+	if not clipped.is_empty() or state==ui.game.field_rng.state or serialized.version!=2 or serialized.board_seed!=ui.game.battle_seed or ui.game.seed_value!=12345:
 		status = 1
 	if orders.is_empty():
 		await camp_edges()
