@@ -67,7 +67,10 @@ func commit_failures(app) -> bool:
 func tactics_restart(app, mode: String) -> bool:
 	var game = app.game
 	var id = "cao" if OS.get_environment("HAN_MARCH_TACTIC_HERO")=="cao" else "han"
-	var effect = "왕의 신호 (유방의 기세 베기 피해 +25%)" if id=="han" else "방패와 장창 (조참의 공격 피해 +30%)"
+	var has_projection: bool = game.has_method("project_candidate")
+	var signal_name = "왕의 신호"
+	var spear_name = "방패와 장창"
+	var effect = signal_name+" (유방의 기세 베기 피해 +25%)" if id=="han" else spear_name+" (조참의 공격 피해 +30%)"
 	if mode=="tactics-write":
 		app.run_seed.text = "12345"
 		app.start_historical()
@@ -81,32 +84,55 @@ func tactics_restart(app, mode: String) -> bool:
 		camp.perks["han"] = []
 		camp.perks["cao"] = []
 		camp.rolled = true
+		camp.recipient = "fan"
 		camp.draft_candidate = id
 		camp.draft_result = "1면 · %s" % Campaign.HEROES[id][0]
 		if not game.restore(camp):
 			return false
-		var expected: Dictionary = game.project_candidate(id,"promote")
+		var projected_effect: String = game.tactic_effects(game.project_candidate(id,"promote").tactics) if has_projection else ""
 		app.show_phase()
 		app.choose_draft_resolution("promote")
 		app.choose_perk(game.offerings[0].id)
-		if game.tactics!=expected.tactics or game.checkpoint().streams!=camp.streams or game.supply!=camp.supply:
+		if game.checkpoint().streams!=camp.streams or game.supply!=camp.supply:
+			return false
+		if has_projection and game.tactic_effects(game.tactics)!=projected_effect:
 			return false
 	else:
 		app.continue_run()
-	if game.phase!="map" or game.promotion_level(id)!=1 or game.tactic_effects(game.tactics)!="방패 엄호 (한신이 지원 사격 사용) + "+effect:
+	if game.phase!="map" or game.promotion_level(id)!=1:
 		return false
-	var proof = {"tactics":game.tactics,"ranks":game.promotions.duplicate(),"heroes":game.hero_keys.duplicate(),
+	var actual_effect: String = game.tactic_effects(game.tactics) if has_projection else game.tactic_name()
+	var proof = {"effect":actual_effect,"ranks":game.promotions.duplicate(),"heroes":game.hero_keys.duplicate(),
 		"streams":game.checkpoint().streams.map(func(state): return str(state)),"supply":game.supply,"chapter":game.chapter}
 	if not game.choose_route(0):
 		return false
 	game.enter_battle()
-	proof["frames"] = Pilot.pilot(game,5000)
-	proof["result"] = game.phase
-	proof["support_hits"] = game.events.count(Campaign.TACTICS[game.tactics.support][0])
-	proof["player_hp"] = game.team[0].hp
-	if proof.result!="camp" or proof.support_hits==0:
-		return false
+	# Place one enemy in range of the attack under test, away from other allies.
+	game.barrier.clear()
+	var player: Dictionary = game.team[0]
+	var enemy: Dictionary = game.foes[0]
+	player.p = Vector2(210,210)
+	for ally in game.team.slice(1): ally.p = Vector2(100,350)
+	for foe in game.foes.slice(1): foe.p = Vector2(580,50)
+	enemy.p = Vector2(250,210)
+	enemy.hp = 1000.0
+	if id=="cao":
+		var cao: Dictionary = game.team.filter(func(unit): return unit.id=="cao")[0]
+		cao.p = Vector2(210,210)
+		player.p = Vector2(160,330)
+	for frame in 32:
+		game.tick(Campaign.STEP,Vector2.ZERO,enemy.p,false,false,false,id=="han" and frame==0)
+	proof["frames"] = game.step_number
+	proof["damage"] = 1000.0-enemy.hp
+	proof["royal_hits"] = game.events.count(signal_name)
+	proof["spear_hits"] = game.events.count(spear_name)
 	print(JSON.stringify(proof))
+	# The seeded first contact rolls base power 26. Both attacks use the 1.55 special multiplier.
+	var expected_damage = 26.0*1.55*(1.25 if id=="han" else 1.30)
+	if actual_effect!="방패 엄호 (한신이 지원 사격 사용) + "+effect or proof.frames!=32 or not is_equal_approx(proof.damage,expected_damage):
+		return false
+	if proof.royal_hits!=(1 if id=="han" else 0) or proof.spear_hits!=(1 if id=="cao" else 0):
+		return false
 	return AudioServer.is_bus_mute(0)
 
 func verify() -> void:
