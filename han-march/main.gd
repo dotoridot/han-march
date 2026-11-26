@@ -730,18 +730,9 @@ func refresh_battle() -> void:
 
 func camp_view(reveal_draft: bool) -> void:
 	screen_body.size_flags_vertical = SIZE_EXPAND_FILL
-	var scroll = ScrollContainer.new()
-	scroll.name = "CampScroll"
-	scroll.size_flags_vertical = SIZE_EXPAND_FILL
-	scroll.follow_focus = true
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	screen_body.add_child(scroll)
-	var sheet = column(scroll,10)
-	sheet.size_flags_horizontal = SIZE_EXPAND_FILL
-	sheet.size_flags_vertical = SIZE_EXPAND_FILL
 	var banner = PanelContainer.new()
 	banner.add_theme_stylebox_override("panel",skin(Color("283737ed"),10))
-	sheet.add_child(banner)
+	screen_body.add_child(banner)
 	var briefing = column(banner,3)
 	var headline = row(briefing)
 	var next_chapter: int = game.chapter+1
@@ -771,6 +762,16 @@ func camp_view(reveal_draft: bool) -> void:
 			note = "%s %s" % [force,"적음" if route[4]<other[4] else "많음"]
 		route_notes.append("%s (%s)" % [route[0],note])
 	words(briefing,"경유지 선택 전 / %s. 지형은 경유지에 따라 달라집니다." % ", ".join(route_notes),14,MAP_SECONDARY,true)
+	var paging = words(briefing,"Tab 선택 / Page Up, Page Down으로 내용 읽기",14,MAP_SECONDARY,true)
+	var scroll = ScrollContainer.new()
+	scroll.name = "CampScroll"
+	scroll.size_flags_vertical = SIZE_EXPAND_FILL
+	scroll.follow_focus = true
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	screen_body.add_child(scroll)
+	var sheet = column(scroll,10)
+	sheet.size_flags_horizontal = SIZE_EXPAND_FILL
+	sheet.size_flags_vertical = SIZE_EXPAND_FILL
 	var reward_notes = {}
 	if game.golden_refund():
 		var id: String = game.draft_candidate
@@ -874,10 +875,10 @@ func camp_view(reveal_draft: bool) -> void:
 			elif id not in game.hero_keys:
 				after = draft_tactic_line(id,"","합류",current)
 			elif game.promotion_level(id)<Campaign.PROMOTION_CAP:
-				after = draft_tactic_line(id,"promote","승급",current)
-				after += " / 보급 +%d 전환 시 현재 진법 유지" % supply_gain
+				after = draft_tactic_line(id,"promote","승급",current,false)
+				after += " / 보급 +%d 전환" % supply_gain
 			else:
-				after = draft_tactic_line(id,"supply","승급 상한 / 보급 +%d 전환" % supply_gain,current)
+				after = draft_tactic_line(id,"supply","승급 상한 / 보급 +%d 전환" % supply_gain,current,false)
 			words(tactics,"%s %d/18 | %s" % [Campaign.HEROES[id][0],weights[i],after],14,MAP_SECONDARY,true)
 	else:
 		var id: String = game.draft_candidate
@@ -892,10 +893,10 @@ func camp_view(reveal_draft: bool) -> void:
 				pending = "%s 승급 예정 / %d단계" % [Campaign.HEROES[id][0],level+1]
 			elif draft_resolution=="supply":
 				pending = "보급 +%d 전환 예정" % gain
-			if not capped:
-				words(tactics,draft_tactic_line(id,"promote","승급",current),15,PAPER,true)
-			words(tactics,draft_tactic_line(id,"supply","보급 +%d 전환" % gain,current),15,PAPER,true)
 			if draft_resolution.is_empty():
+				if not capped:
+					words(tactics,draft_tactic_line(id,"promote","승급",current),15,PAPER,true)
+				words(tactics,draft_tactic_line(id,"supply","보급 +%d 전환" % gain,current),15,PAPER,true)
 				for note in reward_notes.values(): words(die_column,note,14,GOLD,true)
 			var rewards = flow(die_column,4)
 			var promote_label = "승급 상한 도달" if capped else "승급 %d → %d%s" % [level,level+1," ✓" if draft_resolution=="promote" else ""]
@@ -923,7 +924,8 @@ func camp_view(reveal_draft: bool) -> void:
 	pending_result.visible = not pending.is_empty()
 	if draft_resolution=="promote": pending_result.add_theme_color_override("font_color",PROMOTION_BLUE)
 	var more = action(tactics,"진법 규칙과 적용 중인 군령",func():
-		activate_modal()
+		var detail_size = Vector2(minf(680,size.x-70),minf(460,size.y-70))
+		activate_modal(detail_size)
 		words(modal_content,"진법과 군령",24,GOLD)
 		var back = action(modal_content,"돌아가기",close_modal,true)
 		words(modal_content,"주 진법은 방패 엄호 > 약낭 돌파, 보조 진법은 왕의 신호 > 방패와 장창 순으로 각각 하나까지 적용됩니다.",15,PAPER,true)
@@ -977,15 +979,18 @@ func camp_view(reveal_draft: bool) -> void:
 	var reflow = func():
 		var count = 3 if scroll.size.x>=1000.0 else 1
 		columns.columns = count
+		paging.visible = count==1
 		cards.columns = count
 		choices.columns = 1 if count==3 else 2
 		confirmation.visible = count==1 and not pending.is_empty()
 	scroll.resized.connect(reflow)
 	reflow.call()
 
-func draft_tactic_line(id: String, resolution: String, label: String, current: String) -> String:
+func draft_tactic_line(id: String, resolution: String, label: String, current: String, show_transition := true) -> String:
 	var projected: Dictionary = game.project_candidate(id,resolution)
 	var after: String = game.tactic_effects(projected.tactics)
+	if not show_transition:
+		return "%s: %s" % [label,"현재 진법 유지" if current==after else after]
 	return "%s: %s (유지)" % [label,after] if current==after else "%s: %s → %s" % [label,current,after]
 
 func change_odds(id: String) -> void:
@@ -1083,7 +1088,7 @@ func back_to_title() -> void:
 	save()
 	show_phase()
 
-func activate_modal() -> void:
+func activate_modal(content_size := Vector2(560,385)) -> void:
 	if not modal_active:
 		resume_control = get_viewport().gui_get_focus_owner()
 	modal_active = true
@@ -1091,6 +1096,7 @@ func activate_modal() -> void:
 	dodge_pending = false
 	skill_pending = false
 	empty(modal_content)
+	modal_content.get_parent().custom_minimum_size = content_size
 	modal.show()
 	stage.hide()
 	map_overlay.hide()
@@ -1203,6 +1209,12 @@ func _input(event: InputEvent) -> void:
 				close_modal()
 			elif not (game.phase=="map" and dismiss_map_detail.is_valid() and dismiss_map_detail.call()):
 				show_menu()
+		elif game.phase=="camp" and not modal_active and event.physical_keycode in [KEY_PAGEUP,KEY_PAGEDOWN]:
+			var scroll: ScrollContainer = screen_body.get_node("CampScroll")
+			if scroll.get_v_scroll_bar().visible:
+				var step = roundi(scroll.size.y*0.8)
+				scroll.scroll_vertical += step if event.physical_keycode==KEY_PAGEDOWN else -step
+				get_viewport().set_input_as_handled()
 		elif game.phase=="map" and not modal_active and event.physical_keycode in [KEY_UP,KEY_DOWN,KEY_LEFT,KEY_RIGHT]:
 			get_viewport().set_input_as_handled()
 		elif game.phase=="map" and not modal_active and event.physical_keycode==KEY_E:

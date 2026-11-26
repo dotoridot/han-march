@@ -83,7 +83,15 @@ func check_camp_layout() -> void:
 	var checks = sections.get_child_count()==3 and sections.columns==expected_columns and cards.columns==expected_columns
 	checks = checks and cards.get_child_count()==ui.game.offerings.size()
 	if wide:
-		checks = checks and not scroll.get_v_scroll_bar().visible and frame.encloses(sections.get_global_rect()) and frame.encloses(cards.get_global_rect())
+		var forecast: Array[String] = []
+		for label in ui.screen_body.find_children("*","Label",true,false):
+			var bounds: Rect2 = label.get_global_rect()
+			if root.get_visible_rect().encloses(bounds) and (not scroll.is_ancestor_of(label) or frame.encloses(bounds)):
+				forecast.append(label.text)
+		checks = checks and forecast.any(func(copy): return copy.begins_with("다음 전장 / "))
+		checks = checks and forecast.has("보급 %d" % ui.game.supply)
+		checks = checks and scroll.scroll_vertical==0 and not scroll.get_v_scroll_bar().visible
+		checks = checks and frame.encloses(sections.get_global_rect()) and frame.encloses(cards.get_global_rect())
 	for i in cards.get_child_count():
 		var button: Button = cards.get_child(i)
 		var perk: Dictionary = ui.game.offerings[i]
@@ -128,6 +136,18 @@ func camp_edges() -> void:
 	if not root.get_visible_rect().encloses(roll.get_global_rect()) or not roll.has_focus() or roll.accessibility_name!=roll.text:
 		push_error("Free roll is not visible and focused at 760x544")
 		status = 1
+	var scroll: ScrollContainer = ui.screen_body.find_child("CampScroll",true,false)
+	if scroll!=null:
+		var previous = scroll.scroll_vertical
+		var page = InputEventKey.new()
+		page.physical_keycode = KEY_PAGEUP
+		page.pressed = true
+		root.push_input(page)
+		await process_frame
+		if scroll.scroll_vertical>=previous:
+			push_error("Page Up must scroll the narrow camp without a pointer")
+			status = 1
+		scroll.scroll_vertical = previous
 	var key = InputEventKey.new()
 	key.keycode = KEY_ENTER
 	key.pressed = true
@@ -294,6 +314,7 @@ func order_edges() -> void:
 			status = 1
 		confirm_with_enter()
 		await snap("orders-promotion-%d" % example[0])
+		check_camp_layout()
 		check_reward_view(promote,"강화")
 		var pending_visible = false
 		for label in ui.screen_body.find_children("*","Label",true,false):
@@ -374,6 +395,24 @@ func order_edges() -> void:
 				status = 1
 	print("Convoy map / all labels and buttons inspected in ",root.size)
 	await ration_heal(camp)
+	var late = camp.duplicate(true)
+	late.chapter = 2
+	late.heroes.append("han")
+	late.perks.han = []
+	late.mode = "fiction"
+	ui.game.restore(late)
+	ui.show_phase()
+	await snap("orders-late-odds")
+	check_camp_layout()
+	late.draft_plan = "lance"
+	late.rolled = true
+	late.draft_candidate = "cao"
+	late.draft_result = "18면 / 조참"
+	ui.game.restore(late)
+	ui.show_phase()
+	ui.choose_draft_resolution("promote")
+	await snap("orders-late-promotion")
+	check_camp_layout()
 	if OS.get_environment("HAN_MARCH_FORECAST_AUDIO_TEST")=="1":
 		check_draft_audio(camp)
 	print("Orders UI ",root.size," / text scale ",ui.text_zoom," / result ",status)
@@ -449,12 +488,13 @@ func check_camp_orders() -> void:
 	details.grab_focus()
 	confirm_with_enter()
 	await snap("orders-detail")
-	var found = false
+	var scroller: ScrollContainer = ui.modal_content.get_parent()
+	var effects: Array[String] = []
 	for label in ui.modal_content.find_children("*","Label",true,false):
-		if "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in label.text and label.is_visible_in_tree() and root.get_visible_rect().encloses(label.get_global_rect()):
-			found = true
-	if not found:
-		push_error("The active order must expose the full first-healing effect through the keyboard")
+		if label.is_visible_in_tree() and scroller.get_global_rect().encloses(label.get_global_rect()) and label.get_visible_line_count()==label.get_line_count():
+			effects.append(label.text)
+	if not effects.any(func(copy): return "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in copy) or scroller.get_v_scroll_bar().visible:
+		push_error("The active order must show its full text inside the details viewport")
 		status = 1
 	confirm_with_enter()
 	await process_frame
