@@ -30,14 +30,24 @@ func camp_edges() -> void:
 	ui.build_theme()
 	ui.complete_travel()
 	Pilot.pilot(ui.game,5000)
-	ui.show_phase()
 	if ui.game.phase!="camp":
 		push_error("Narrow-window run did not reach the first camp")
 		status = 1
 		return
 	var before: Dictionary = ui.game.checkpoint()
+	ui.show_phase()
+	if ui.game.checkpoint()!=before:
+		push_error("First camp forecast changed checkpoint or RNG state")
+		status = 1
+	ui.show_phase()
 	await snap("narrow-first-camp")
 	var table = camp_labels()
+	if "다음 전장 / 팽성" not in table or "추격병" not in table or "경유지 선택 전" not in table:
+		push_error("Camp forecast omits the next battlefield, its pursuit or the unselected routes")
+		status = 1
+	if ui.game.checkpoint()!=before:
+		push_error("Camp forecast changed checkpoint or RNG state")
+		status = 1
 	if "조참 8/18 | 합류: 기본 대열 → 약낭 돌파" not in table or "항우 0/18 | 역사 행군에서는 등용할 수 없습니다." not in table:
 		push_error("Odds rows omit the tactic transition or the zero-weight reason")
 		status = 1
@@ -53,7 +63,28 @@ func camp_edges() -> void:
 	key.pressed = false
 	root.push_input(key)
 	await snap("narrow-first-recruit")
+	if "합류 예정" not in camp_labels() or "합류 확정" in camp_labels():
+		push_error("The rolled recruit must remain pending")
+		status = 1
 	if ui.game.draft_candidate not in ["han","cao"] or ui.game.supply!=before.supply:
+		status = 1
+	var recruit: String = ui.game.draft_candidate
+	ui.motion_reduced = true
+	ui.continue_run()
+	await snap("narrow-reopened-roll")
+	var settled: float = ui.dice_view.get("reveal_elapsed")
+	if settled<.74 or "합류 예정" not in camp_labels():
+		push_error("Restoring a saved roll should show the pending result without motion")
+		status = 1
+	ui.choose_perk(ui.game.offerings[0].id)
+	await snap("narrow-recruit-confirmed")
+	if recruit not in ui.game.hero_keys or "합류 확정" not in camp_labels() or ui.audio_sequence!=0:
+		push_error("The saved recruit must be announced on the map")
+		status = 1
+	ui.continue_run()
+	await process_frame
+	if "합류 확정" in camp_labels() or ui.audio_sequence!=0:
+		push_error("Reloading a map checkpoint must not replay the confirmed result")
 		status = 1
 	# The imported pending result exercises a duplicate even if the normal roll is a recruit.
 	before.heroes.append_array(["han","cao"])
@@ -95,6 +126,43 @@ func camp_edges() -> void:
 	if ui.game.phase!="map" or ui.game.promotion_level("han")!=1 or ui.game.tactics.support!="royal_signal":
 		status = 1
 	print("Narrow camp 760x544 (118%): keyboard roll, mouse promotion choice, keyboard confirmation")
+	for supply in [0,1]:
+		var route_camp = before.duplicate(true)
+		route_camp.rolled = false
+		route_camp.draft_result = ""
+		route_camp.draft_candidate = ""
+		route_camp.supply = supply
+		ui.game.restore(route_camp)
+		ui.show_phase()
+		var can_depart: bool = supply==1
+		var forecast: String = camp_labels()
+		ui.choose_perk(ui.game.offerings[0].id)
+		var choice: Button = ui.primary_button
+		ui.choose_route(0)
+		var departed: bool = ui.game.phase=="battle" and ui.checkpoint_data.get("phase")=="travel"
+		if ("수변 나루 (보급 부족, 1 필요)" in forecast)==can_depart or ("수변 나루 (초기 적이 적음)" in forecast)!=can_depart or choice.disabled==can_depart or departed!=can_depart:
+			push_error("Camp, map and departure disagree on the ferry at supply %d" % supply)
+			status = 1
+		print("Ferry supply ",supply," / disabled ",choice.disabled," / departed ",departed)
+	var conversion = before.duplicate(true)
+	conversion.supply = 0
+	ui.game.restore(conversion)
+	ui.show_phase()
+	ui.choose_draft_resolution("supply")
+	var available: bool = "수변 나루 (초기 적이 적음)" in camp_labels()
+	ui.choose_perk(ui.game.offerings[0].id)
+	ui.choose_route(0)
+	if not available or ui.game.phase!="battle" or ui.game.supply!=1:
+		push_error("The ferry forecast must use supply from the pending conversion")
+		status = 1
+	print("Ferry projected conversion 0 → 2 / departure supply ",ui.game.supply)
+	var convoy = before.duplicate(true)
+	convoy.chapter = 1
+	ui.game.restore(convoy)
+	ui.show_phase()
+	if "오창 보급길 (매복병이 많음)" not in camp_labels() or "성고 산등성이 (매복병이 적음)" not in camp_labels():
+		push_error("The convoy forecast must describe the route-dependent ambush")
+		status = 1
 
 func order_edges() -> void:
 	ui.complete_travel()
@@ -126,6 +194,9 @@ func order_edges() -> void:
 		ui.change_odds("lance")
 		ui.perform_roll()
 		await snap("orders-golden-%d" % example[0])
+		if "18면 대길" not in camp_labels() or "조참 승급 확정" in camp_labels():
+			push_error("18 must be visible alongside the pending duplicate reward")
+			status = 1
 		var before: Dictionary = ui.game.checkpoint()
 		var rolled: int = example[0]-1
 		var promote = "승급 시 보급 %d → %d / 전환 +0 / 황금 눈 +1 (상한 9)" % [rolled,rolled+1]
@@ -144,6 +215,13 @@ func order_edges() -> void:
 		confirm_with_enter()
 		await snap("orders-promotion-%d" % example[0])
 		check_reward_view(promote,"강화")
+		var pending_label: Label
+		for label in ui.dice_view.get_parent().find_children("*","Label",true,false):
+			if label.text.begins_with("조참 승급 예정"):
+				pending_label = label
+		if not is_instance_valid(pending_label) or not root.get_visible_rect().encloses(pending_label.get_global_rect()):
+			push_error("The pending promotion must stay visible when focus scrolls to the perk")
+			status = 1
 		if example[0]==9:
 			ui.choose_draft_resolution("supply")
 			await snap("orders-cap-conversion")
@@ -155,17 +233,125 @@ func order_edges() -> void:
 		if ui.game.checkpoint()!=before or ui.game.supply!=rolled:
 			push_error("Preview changed the rolled checkpoint")
 			status = 1
+		if example[0]==3:
+			var path: String = ui.store_path
+			ui.store_path = path.path_join("unwritable.cfg")
+			ui.choose_perk(ui.game.offerings[0].id)
+			var failed: Dictionary = ui.game.checkpoint()
+			if failed.streams!=before.streams or failed.phase!="camp" or failed.promotions!=before.promotions or failed.supply!=before.supply or failed.draft_candidate!=before.draft_candidate or not ui.save_error or "조참 승급 확정" in camp_labels() or ui.audio_sequence!=0:
+				print("Save failure state: ",failed.phase," / ",failed.promotions," / ",failed.supply," / ",failed.draft_candidate," / ",ui.save_error," / muted cues ",ui.audio_sequence)
+				push_error("Save failure must leave the promotion and its presentation pending")
+				status = 1
+			ui.store_path = path
+			ui.close_modal()
+			await process_frame
+			await process_frame
 		confirm_with_enter()
 		await snap("orders-map-%d-%s" % [example[0],example[1]])
 		var saved = ConfigFile.new()
 		var saved_ok = saved.load(ui.store_path)==OK
 		var state: Dictionary = saved.get_value("checkpoint","state",{}) if saved_ok else {}
 		var promoted: bool = example[1]=="promote"
+		var outcome = "조참 승급 확정" if promoted else "조참 중복, 보급 전환 확정"
+		if not root.get_visible_rect().encloses(ui.map_prompt.get_global_rect()) or not root.get_visible_rect().encloses(ui.primary_button.get_global_rect()):
+			push_error("The confirmed result must leave the map controls and prompt visible")
+			status = 1
+		if "18면 대길" not in camp_labels() or outcome not in camp_labels() or ui.audio_sequence!=0:
+			push_error("Confirmed result must identify both 18 and its saved outcome while muted")
+			status = 1
+		ui.show_phase()
+		if outcome not in camp_labels() or ui.dice_view.get("reveal_elapsed")<.74 or ui.audio_sequence!=0:
+			push_error("Rebuilding the map must preserve the result without replaying it")
+			status = 1
 		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted) or ("조참 최대 및 시작 MP +4" in camp_labels())!=promoted:
 			push_error("Saved supply, rank or RNG differs from the forecast")
 			status = 1
+	var convoy = camp.duplicate(true)
+	convoy.chapter = 1
+	convoy.rolled = true
+	convoy.draft_candidate = "cao"
+	convoy.draft_result = "18면 / 조참"
+	ui.game.restore(convoy)
+	ui.show_phase()
+	if directory and ui.save():
+		DirAccess.copy_absolute(ui.store_path,directory.path_join("convoy-camp.cfg"))
+	ui.choose_draft_resolution("supply")
+	ui.choose_perk(ui.game.offerings[0].id)
+	await snap("orders-convoy-confirmed")
+	for index in [-1,0,1]:
+		ui.refresh_map_prompt(index)
+		await process_frame
+		await process_frame
+		for control in ui.screen_body.find_children("*","Control",true,false):
+			if (control is Label or control is Button) and not root.get_visible_rect().encloses(control.get_global_rect()):
+				push_error("The confirmed convoy route or prompt is clipped: %s" % control.text)
+				status = 1
+	print("Convoy map / all labels and buttons inspected in ",root.size)
 	await ration_heal(camp)
+	if OS.get_environment("HAN_MARCH_FORECAST_AUDIO_TEST")=="1":
+		check_draft_audio(camp)
 	print("Orders UI ",root.size," / text scale ",ui.text_zoom," / result ",status)
+
+func check_draft_audio(camp: Dictionary) -> void:
+	if DisplayServer.get_name()!="headless" or AudioServer.get_driver_name()!="Dummy" or not AudioServer.is_bus_mute(0) or not OS.has_environment("HAN_MARCH_PROFILE"):
+		push_error("Draft audio probe requires a muted, isolated headless Dummy run")
+		status = 1
+		return
+	print("Draft audio driver: ",AudioServer.get_driver_name(),", initially muted")
+	AudioServer.set_bus_mute(0,false)
+	for example in [
+		[18,"cao","promote",["promotion","great_fortune"]],
+		[18,"cao","",["recruit","great_fortune"]],
+		[9,"han","",["recruit"]],
+		[1,"fan","promote",["promotion"]],
+		[18,"cao","supply",["great_fortune"]],
+	]:
+		for player in ui.audio_players:
+			player.stop()
+		var pending = camp.duplicate(true)
+		if example[2]=="":
+			pending.heroes.erase(example[1])
+			pending.perks.erase(example[1])
+		pending.rolled = true
+		pending.draft_candidate = example[1]
+		pending.draft_result = "%d면 / %s" % [example[0],Campaign.HEROES[example[1]][0]]
+		var first: int = ui.audio_sequence
+		var slot: int = ui.audio_next
+		ui.game.restore(pending)
+		ui.show_phase()
+		ui.perform_redraw()
+		ui.game.restore(pending)
+		ui.show_phase()
+		ui.choose_draft_resolution(example[2])
+		var path: String = ui.store_path
+		ui.store_path = path.path_join("unwritable.cfg")
+		var perk: String = ui.game.offerings[0].id
+		ui.choose_perk(perk)
+		if not ui.save_error or ui.audio_sequence!=first:
+			push_error("Pending, redrawn or failed draft played a cue")
+			status = 1
+		ui.store_path = path
+		ui.close_modal()
+		ui.choose_perk(perk)
+		var expected: Array = example[3]
+		var played: Array[String] = []
+		for i in expected.size():
+			var index = (slot+i)%4
+			var player: AudioStreamPlayer = ui.audio_players[index]
+			if player.playing and player.stream==ui.sounds.get(expected[i]) and ui.audio_started[index]==first+i+1:
+				played.append(expected[i])
+		if ui.game.phase!="map" or ui.audio_players.size()!=4 or ui.audio_sequence!=first+expected.size() or played!=expected:
+			push_error("Saved draft did not play each expected cue once in the four-slot pool")
+			status = 1
+		var committed: int = ui.audio_sequence
+		ui.choose_perk(perk)
+		ui.show_phase()
+		ui.continue_run()
+		if ui.audio_sequence!=committed:
+			push_error("Repeat confirmation, redraw or checkpoint resume replayed a saved cue")
+			status = 1
+		print("Draft audio ",example[0],"/",example[1],"/",example[2],": ",played," / first slot ",slot," / total ",ui.audio_sequence-first)
+	AudioServer.set_bus_mute(0,true)
 
 func check_reward_view(note: String, stage: String) -> void:
 	var focus: Control = root.gui_get_focus_owner()
@@ -263,7 +449,7 @@ func verify() -> void:
 	ui.continue_run()
 	await snap("narrow-reopened-checkpoint")
 	print("Reopen: ",ui.game.seed_value," / ",ui.game.selected_route," / ",ui.game.battle_seed)
-	if not clipped.is_empty() or state==ui.game.field_rng.state or serialized.board_seed!=ui.game.battle_seed or ui.game.seed_value!=12345:
+	if not clipped.is_empty() or state==ui.game.field_rng.state or serialized.version!=2 or serialized.board_seed!=ui.game.battle_seed or ui.game.seed_value!=12345:
 		status = 1
 	if orders.is_empty():
 		await camp_edges()
