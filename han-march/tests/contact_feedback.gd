@@ -43,6 +43,9 @@ func check_audio_pool(app) -> void:
 	var loop: AudioStreamWAV = impact.duplicate()
 	loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	loop.loop_end = 2200
+	var axe: AudioStreamOggVorbis = app.impacts["axe_impact"]
+	var axe_loop = axe.loop
+	axe.loop = true
 	for player in players:
 		expect(AudioServer.is_bus_mute(AudioServer.get_bus_index(player.bus)),"Every slot routes through the muted bus")
 		player.bus = AudioServer.get_bus_name(silent_bus)
@@ -57,7 +60,7 @@ func check_audio_pool(app) -> void:
 	app.play("axe_impact")
 	AudioServer.set_bus_mute(0,true)
 	await process_frame
-	expect(players[0].playing and players[0].stream==app.impacts["axe_impact"] and players.slice(1).all(func(player): return player.playing and player.stream==loop),
+	expect(players[0].playing and players[0].stream==axe and players.slice(1).all(func(player): return player.playing and player.stream==loop),
 		"The fifth cue starts the recorded impact on the oldest slot and keeps the other voices")
 	var recorded_pitch: float = players[0].pitch_scale
 	players[3].stop()
@@ -70,13 +73,14 @@ func check_audio_pool(app) -> void:
 	app.play("axe_impact")
 	AudioServer.set_bus_mute(0,true)
 	await process_frame
-	expect(players[3].playing and players[3].stream==impact and players[0].stream==app.impacts["axe_impact"],
+	expect(players[3].playing and players[3].stream==impact and players[0].playing and players[0].stream==axe,
 		"Synthetic mode starts the WAV on the next idle slot and preserves the active Ogg")
 	expect(players[3].pitch_scale!=recorded_pitch,"Two overlapping cues can vary pitch independently")
 	expect(game.combat_rng.state==rng_state,"Audio scheduling does not consume combat RNG")
 	for player in players:
 		player.stop()
 		player.bus = &"Master"
+	axe.loop = axe_loop
 	AudioServer.remove_bus(silent_bus)
 
 func weapon_case(weapon: String, attacker: String, distance: float) -> void:

@@ -441,6 +441,8 @@ func label_chip(raw: String, p: Vector2, tint: Color, occupied: Array[Rect2], fo
 	if display=="battle":
 		var side = area.size.x+13
 		offsets.append_array([Vector2(-side,0),Vector2(side,0),Vector2(-side,-20),Vector2(side,-20),Vector2(-side,20),Vector2(side,20)])
+		for shift in [-side*2,side*2]:
+			offsets.append_array([Vector2(shift,0),Vector2(shift,20)])
 	for offset in offsets:
 		var moved = Rect2(area.position+offset,area.size)
 		moved.position = moved.position.clamp(box.position+Vector2(2,2),box.end-moved.size-Vector2(2,2))
