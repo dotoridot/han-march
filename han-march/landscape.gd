@@ -437,8 +437,12 @@ func label_chip(raw: String, p: Vector2, tint: Color, occupied: Array[Rect2], fo
 	var dims = chip_font.get_string_size(raw,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size)
 	var pad = Vector2(5,2)
 	var area = Rect2(p-Vector2(dims.x*0.5,dims.y+5),dims+pad*2)
-	for offset in [0,-23,23,-46,46,-70]:
-		var moved = Rect2(area.position+Vector2(0,offset),area.size)
+	var offsets = [Vector2.ZERO,Vector2(0,-23),Vector2(0,23),Vector2(0,-46),Vector2(0,46),Vector2(0,-70)]
+	if display=="battle":
+		var side = area.size.x+13
+		offsets.append_array([Vector2(-side,0),Vector2(side,0),Vector2(-side,-20),Vector2(side,-20),Vector2(-side,20),Vector2(side,20)])
+	for offset in offsets:
+		var moved = Rect2(area.position+offset,area.size)
 		moved.position = moved.position.clamp(box.position+Vector2(2,2),box.end-moved.size-Vector2(2,2))
 		if occupied.any(func(item): return item.intersects(moved)):
 			continue
@@ -447,12 +451,20 @@ func label_chip(raw: String, p: Vector2, tint: Color, occupied: Array[Rect2], fo
 		occupied.append(moved)
 		return
 
-func draw_ally_bars(unit: Dictionary, occupied: Array[Rect2]) -> void:
-	var dimensions = Vector2(roundf(38*text_zoom),roundf(17*text_zoom))
+func draw_ally_bars(unit: Dictionary, occupied: Array[Rect2], font_size: int) -> void:
+	var dimensions = Vector2(roundf(51*text_zoom),roundf(19*text_zoom))
 	var anchor = to_screen(unit.p-Vector2(0,46))-Vector2(dimensions.x*0.5,dimensions.y)
 	var values = [unit.hp/unit.max_hp,unit.mp/maxf(1.0,unit.max_mp),unit.fatigue/100.0]
 	var colors = [Color("a5cb93"),Color("92c2df"),Color("e3ad5e")]
-	for offset in [Vector2.ZERO,Vector2(-12,-7),Vector2(12,-7),Vector2(0,-15)]:
+	var side = dimensions.x+4
+	var above = -dimensions.y-3
+	var offsets = [Vector2.ZERO,Vector2(0,above),Vector2(-side,0),Vector2(side,0),
+			Vector2(-side,above),Vector2(side,above),Vector2(0,above*2),
+			Vector2(-side*2,0),Vector2(side*2,0),Vector2(-side*3,0),Vector2(side*3,0)]
+	for row in [3,4]:
+		for column in [0,-1,1,-2,2]:
+			offsets.append(Vector2(column*side,-row*above))
+	for offset in offsets:
 		var area = Rect2(anchor+offset,dimensions)
 		area.position = area.position.clamp(box.position+Vector2(2,2),box.end-dimensions-Vector2(2,2))
 		if occupied.any(func(item): return item.intersects(area.grow(1))):
@@ -460,9 +472,13 @@ func draw_ally_bars(unit: Dictionary, occupied: Array[Rect2]) -> void:
 		ink.draw_rect(area,INK)
 		if unit.uid==inspected_uid:
 			ink.draw_rect(area,TEXT_COLOR,false,1.0)
+		var initial: String = Campaign.HEROES[unit.id][0].substr(0,1)
+		var baseline = (dimensions.y-chip_font.get_height(font_size))*0.5+chip_font.get_ascent(font_size)
+		ink.draw_string(chip_font,area.position+Vector2(3,baseline),initial,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,TEXT_COLOR)
 		var height = floorf((dimensions.y-6)/3)
+		var left = font_size+5
 		for i in values.size():
-			var rail = Rect2(area.position+Vector2(3,2+i*(height+1)),Vector2(dimensions.x-6,height))
+			var rail = Rect2(area.position+Vector2(left,2+i*(height+1)),Vector2(dimensions.x-left-3,height))
 			ink.draw_rect(rail,Color("564a42"))
 			rail.size.x *= clampf(values[i],0.0,1.0)
 			if rail.size.x>0:
@@ -512,11 +528,11 @@ func draw_chips() -> void:
 		label_chip("방책 2곳 개방 시 지휘관 공격 가능",to_screen(Vector2(325,54)),TEXT_COLOR,used,font_size)
 	for ally in game.alive(game.team):
 		if ally.uid==inspected_uid:
-			draw_ally_bars(ally,used)
+			draw_ally_bars(ally,used,font_size)
 			break
 	for ally in game.alive(game.team):
 		if ally.uid!=inspected_uid:
-			draw_ally_bars(ally,used)
+			draw_ally_bars(ally,used,font_size)
 
 func _draw() -> void:
 	var reading = Time.get_ticks_usec()

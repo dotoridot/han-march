@@ -35,28 +35,49 @@ func check_audio_pool(app) -> void:
 		app.toggle_impacts()
 		return
 	var rng_state: int = game.combat_rng.state
-	var loop: AudioStreamWAV = app.sounds["impact"].duplicate()
+	var silent_bus = AudioServer.bus_count
+	AudioServer.add_bus()
+	AudioServer.set_bus_name(silent_bus,"Muted contact test")
+	AudioServer.set_bus_mute(silent_bus,true)
+	var impact: AudioStreamWAV = app.sounds["impact"]
+	var loop: AudioStreamWAV = impact.duplicate()
 	loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	loop.loop_end = 2200
-	for i in players.size():
-		var player: AudioStreamPlayer = players[i]
+	for player in players:
 		expect(AudioServer.is_bus_mute(AudioServer.get_bus_index(player.bus)),"Every slot routes through the muted bus")
-		player.stream = loop
-		player.play()
-		app.audio_started[i] = [8,5,7,6][i]
+		player.bus = AudioServer.get_bus_name(silent_bus)
+	app.sounds["impact"] = loop
+	# Open only the Master gate. All slots stay on the muted test bus with the Dummy driver.
+	AudioServer.set_bus_mute(0,false)
+	for i in players.size(): app.play("impact")
+	AudioServer.set_bus_mute(0,true)
 	await process_frame
-	app.audio_next = 2
-	expect(app.next_audio_slot()==1,"Only a saturated pool replaces the oldest active cue")
-	players[0].stop()
-	expect(app.next_audio_slot()==0,"The next idle slot wins over any active cue")
+	expect(players.all(func(player): return player.playing and player.stream==loop),"Four cue requests fill separate slots before replacing any voice")
+	AudioServer.set_bus_mute(0,false)
+	app.play("axe_impact")
+	AudioServer.set_bus_mute(0,true)
+	await process_frame
+	expect(players[0].playing and players[0].stream==app.impacts["axe_impact"] and players.slice(1).all(func(player): return player.playing and player.stream==loop),
+		"The fifth cue starts the recorded impact on the oldest slot and keeps the other voices")
+	var recorded_pitch: float = players[0].pitch_scale
 	players[3].stop()
-	expect(app.next_audio_slot()==3,"Idle slots are visited in round-robin order")
+	app.sounds["impact"] = impact
 	app.play("axe_impact")
 	app.toggle_impacts()
 	app.play("axe_impact")
-	expect(AudioServer.is_bus_mute(0) and not players[0].playing and not players[3].playing,"Muted cues cannot start in either sound mode")
+	expect(AudioServer.is_bus_mute(0) and not players[3].playing and app.audio_sequence==5,"Muted cues cannot start in either sound mode")
+	AudioServer.set_bus_mute(0,false)
+	app.play("axe_impact")
+	AudioServer.set_bus_mute(0,true)
+	await process_frame
+	expect(players[3].playing and players[3].stream==impact and players[0].stream==app.impacts["axe_impact"],
+		"Synthetic mode starts the WAV on the next idle slot and preserves the active Ogg")
+	expect(players[3].pitch_scale!=recorded_pitch,"Two overlapping cues can vary pitch independently")
 	expect(game.combat_rng.state==rng_state,"Audio scheduling does not consume combat RNG")
-	for player in players: player.stop()
+	for player in players:
+		player.stop()
+		player.bus = &"Master"
+	AudioServer.remove_bus(silent_bus)
 
 func weapon_case(weapon: String, attacker: String, distance: float) -> void:
 	var actors = stage(attacker,Vector2(260+distance,197))
@@ -142,13 +163,25 @@ func verify() -> void:
 		game.step(Vector2.ZERO,Vector2.RIGHT,false,false,false,false)
 	game.step(Vector2.ZERO,target.p,true,false,false,false)
 	expect(not source.attack.is_empty() and source.attack.id!=canceled,"Attack returns immediately after the evade window")
-	game.team.append(game.make_actor("fan",Vector2(280,200)))
+	var fan = game.make_actor("fan",Vector2(280,200))
+	var han = game.make_actor("han",Vector2(280,210))
+	var cao = game.make_actor("cao",Vector2(290,210))
+	game.team.append(fan)
+	game.team.append(han)
+	game.team.append(cao)
 	var inspected = InputEventKey.new()
 	inspected.physical_keycode = KEY_C
 	inspected.pressed = true
 	app._input(inspected)
+	app._input(inspected)
 	app.refresh_battle()
-	expect(app.landscape.get("inspected_uid")==game.team.back().uid and "HP 165/165" in app.field_status.text,"C exposes the selected ally's exact values")
+	expect(app.landscape.get("inspected_uid")==han.uid and "한신  HP 115/115" in app.field_status.text,"C exposes the selected ally's exact values")
+	fan.hp = 0
+	app.refresh_battle()
+	expect(app.landscape.get("inspected_uid")==han.uid,"Another ally falling does not change the selected ally")
+	han.hp = 0
+	app.refresh_battle()
+	expect(app.landscape.get("inspected_uid")==source.uid,"Inspection returns to a living ally when the selection falls")
 	expect(AudioServer.is_bus_mute(0) and app.impacts.size()==5,"Recorded sound data imported while the test stays muted")
 	await check_audio_pool(app)
 	expect(not app.recorded_impacts and AudioServer.is_bus_mute(0),"Switching recorded and synthetic sounds does not clear the mute")

@@ -69,7 +69,7 @@ var hit_pending = false
 var dodge_pending = false
 var skill_pending = false
 var mouse_at = Vector2(300,200)
-var inspected_ally := 0
+var inspected_ally := -1
 var scene_variant_text = {
 	"안개":"안개: 활 사거리 감소","진흙":"진흙: 남쪽 이동 느림","고지":"고지: 낮은 곳의 적 이동이 느림"
 }
@@ -273,7 +273,7 @@ func show_phase() -> void:
 	empty(screen_body)
 	announced_phase = game.phase
 	if game.phase=="battle" and old_phase!="battle":
-		inspected_ally = 0
+		inspected_ally = -1
 	screen_body.size_flags_vertical = SIZE_FILL
 	landscape.display = "battle" if game.phase=="battle" else "map"
 	landscape.reduce_motion = motion_reduced
@@ -435,13 +435,15 @@ func refresh_battle() -> void:
 	var field_note: String = scene_variant_text.get(game.field_rule,"") if game.scout_bonus.is_empty() else game.scout_bonus
 	var allies = game.alive(game.team)
 	if not allies.is_empty():
-		inspected_ally %= allies.size()
-		var ally: Dictionary = allies[inspected_ally]
-		landscape.inspected_uid = ally.uid
+		var index = allies.find_custom(func(unit): return unit.uid==inspected_ally)
+		var ally: Dictionary = allies[maxi(0,index)]
+		inspected_ally = ally.uid
+		landscape.inspected_uid = inspected_ally
 		var detail = "%s  HP %d/%d  MP %d/%d  피로 %d/100" % [
 			Campaign.HEROES[ally.id][0],ceili(ally.hp),ally.max_hp,floori(ally.mp),ally.max_mp,roundi(ally.fatigue)]
 		field_status.text = detail if field_note.is_empty() else detail+"  /  "+field_note
 	else:
+		inspected_ally = -1
 		landscape.inspected_uid = -1
 		field_status.text = field_note
 	var id: String = game.player_skill
@@ -709,7 +711,10 @@ func _input(event: InputEvent) -> void:
 				game.cycle_skill()
 				get_viewport().set_input_as_handled()
 			if event.physical_keycode==KEY_C:
-				inspected_ally += 1
+				var allies = game.alive(game.team)
+				if not allies.is_empty():
+					var index = allies.find_custom(func(unit): return unit.uid==inspected_ally)
+					inspected_ally = allies[(index+1)%allies.size()].uid
 				get_viewport().set_input_as_handled()
 
 func _process(dt: float) -> void:
@@ -800,19 +805,16 @@ func build_sound() -> void:
 		sound.data = data
 		sounds[entry[0]] = sound
 
-func next_audio_slot() -> int:
+func play(which: String) -> void:
+	if AudioServer.is_bus_mute(0): return
 	var slot = audio_next
 	for offset in AUDIO_SLOTS:
 		var candidate = (audio_next+offset)%AUDIO_SLOTS
 		if not audio_players[candidate].playing:
-			return candidate
+			slot = candidate
+			break
 		if audio_started[candidate]<audio_started[slot]:
 			slot = candidate
-	return slot
-
-func play(which: String) -> void:
-	if AudioServer.is_bus_mute(0): return
-	var slot = next_audio_slot()
 	var player = audio_players[slot]
 	player.stream = impacts[which] if recorded_impacts and impacts.has(which) else sounds.get(which,sounds["impact"])
 	player.pitch_scale = CUE_PITCHES[audio_sequence%CUE_PITCHES.size()]
