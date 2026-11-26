@@ -31,6 +31,7 @@ var map_prompt: Label
 var map_overlay: MarginContainer
 var map_choices: Array[Button] = []
 var map_prompt_index := -2
+var dismiss_map_detail: Callable
 var skill_status: Label
 var confirmed_draft: Dictionary = {}
 var draft_resolution := ""
@@ -292,6 +293,7 @@ func note_dialogue(parent: Control, key: String, size_px := 16) -> void:
 
 func show_phase(reveal_draft := false) -> void:
 	var old_phase = announced_phase
+	dismiss_map_detail = Callable()
 	empty(screen_body)
 	announced_phase = game.phase
 	if game.phase!="camp" or old_phase!="camp":
@@ -494,21 +496,39 @@ func map_view(reveal_draft: bool) -> void:
 		preview.mouse_filter = MOUSE_FILTER_IGNORE
 		preview_panel.hide()
 		var buttons: Array[Button] = []
+		var dismissed: Array[Button] = []
 		var refresh_detail = func(prefer_hover: bool):
-			if not preview.is_inside_tree(): return
+			if not is_instance_valid(preview) or not preview.is_inside_tree(): return
 			var hovered := get_viewport().gui_get_hovered_control() if prefer_hover else null
 			if hovered==preview_panel: return
 			var current := hovered as Button
 			if current not in buttons:
 				current = get_viewport().gui_get_focus_owner() as Button
-			var index := buttons.find(current)
-			preview_panel.visible = index>=0
-			if index>=0:
-				preview.text = badges[index].detail
+			preview_panel.visible = current in buttons and current not in dismissed
+			if preview_panel.visible:
+				dismissed.clear()
+				preview.text = current.accessibility_description
+		var dismiss_detail = func() -> bool:
+			if not is_instance_valid(preview_panel) or not preview_panel.is_visible_in_tree(): return false
+			for button in buttons:
+				if preview.text==button.accessibility_description:
+					dismissed.assign([button])
+					preview_panel.hide()
+					return true
+			return false
+		dismiss_map_detail = dismiss_detail
+		var toggle_detail = func():
+			var focused := get_viewport().gui_get_focus_owner() as Button
+			if focused not in buttons: return
+			if preview_panel.visible and preview.text==focused.accessibility_description:
+				dismiss_detail.call()
+			else:
+				dismissed.clear()
+				refresh_detail.call(false)
 		preview_panel.mouse_exited.connect(func(): refresh_detail.call_deferred(true))
 		for badge in badges:
 			var draft: bool = badge.get("draft",false)
-			var button = action(controls,badge.title,refresh_detail.bind(false))
+			var button = action(controls,badge.title,toggle_detail)
 			button.accessibility_name = badge.title if draft else "%s 군령" % badge.title
 			button.accessibility_description = badge.detail
 			button.add_theme_font_size_override("font_size",roundi(14*text_zoom))
@@ -538,7 +558,9 @@ func map_view(reveal_draft: bool) -> void:
 				icon.position = Vector2(4,4)
 				icon.size = Vector2(26,28)
 			buttons.append(button)
-			button.mouse_entered.connect(func(): refresh_detail.call_deferred(true))
+			button.mouse_entered.connect(func():
+				if not button.has_focus(): dismissed.erase(button)
+				refresh_detail.call_deferred(true))
 			button.mouse_exited.connect(func(): refresh_detail.call_deferred(true))
 			button.focus_entered.connect(func(): refresh_detail.call_deferred(false))
 			button.focus_exited.connect(func(): refresh_detail.call_deferred(false))
@@ -1089,7 +1111,7 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			if modal_active:
 				close_modal()
-			else:
+			elif not (game.phase=="map" and dismiss_map_detail.is_valid() and dismiss_map_detail.call()):
 				show_menu()
 		elif game.phase=="map" and not modal_active and event.physical_keycode in [KEY_UP,KEY_DOWN,KEY_LEFT,KEY_RIGHT]:
 			get_viewport().set_input_as_handled()

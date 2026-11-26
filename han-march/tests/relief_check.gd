@@ -193,23 +193,49 @@ func map_badge_details(window_size: Vector2i) -> void:
 		tap(KEY_TAB)
 		await process_frame
 	expect(badges[0].has_focus(),"Tab reaches the result badge while the pointer is on an order")
+	var result: Label
+	for label in app.screen_body.find_children("*","Label",true,false):
+		if label.text==badges[0].accessibility_description and label.is_visible_in_tree():
+			result = label
+	expect(is_instance_valid(result),"Keyboard focus shows the same detail as hover")
+	if not is_instance_valid(result):
+		return
 	tap(KEY_ENTER)
 	await process_frame
-	var visible_details: Array[String] = []
-	for label in app.screen_body.find_children("*","Label",true,false):
-		if label.is_visible_in_tree():
-			visible_details.append(label.text)
-	expect(badges[0].accessibility_description in visible_details,"Keyboard and pointer show the same result text")
+	expect(not result.is_visible_in_tree() and badges[0].has_focus(),"Enter closes the focused result")
+	tap(KEY_ENTER)
+	await process_frame
+	expect(result.is_visible_in_tree() and result.text==badges[0].accessibility_description,"Enter reopens the same result")
+
+	mouse.position = badges[0].get_global_rect().get_center()
+	root.push_input(mouse)
+	await process_frame
+	click_map(mouse.position)
+	await process_frame
+	expect(not result.is_visible_in_tree() and badges[0].has_focus(),"Click closes the same focused result")
+	click_map(mouse.position)
+	await process_frame
+	expect(result.is_visible_in_tree() and result.text==badges[0].accessibility_description,"Click reopens the same result")
 	tap(KEY_ESCAPE)
 	await process_frame
-	expect(app.modal_active,"Escape from a badge still opens the menu")
+	expect(not result.is_visible_in_tree() and badges[0].has_focus() and not app.modal_active,
+		"Escape first dismisses detail and retains badge focus")
 	tap(KEY_ESCAPE)
 	await process_frame
-	expect(badges[0].has_focus(),"Closing the menu restores keyboard focus to the badge")
+	expect(app.modal_active,"Escape opens the menu once the detail is closed")
+	tap(KEY_ESCAPE)
+	await process_frame
+	expect(badges[0].has_focus() and not result.is_visible_in_tree(),"Closing the menu restores focus without reopening the detail")
+	mouse.position = Vector2(8,8)
+	root.push_input(mouse)
+	tap(KEY_TAB)
+	await process_frame
+	expect(badges[1].has_focus() and result.is_visible_in_tree() and result.text==badges[1].accessibility_description,
+		"Tab into another badge shows that badge's details")
 	click_map(badges[2].get_global_rect().get_center())
 	await process_frame
 	expect(badges[2].has_focus() and app.game.phase=="map" and app.game.supply==1,
-		"Clicking an order focuses its details without departing or spending supply")
+		"Clicking another order focuses its badge without departing or spending supply")
 	mouse.position = Vector2(8,8)
 	root.push_input(mouse)
 

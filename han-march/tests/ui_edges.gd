@@ -25,6 +25,50 @@ func camp_labels() -> String:
 		lines.append(label.text)
 	return "\n".join(lines)
 
+func map_badge(name: String) -> Button:
+	for button in ui.screen_body.find_children("*","Button",true,false):
+		if button.accessibility_name==name:
+			return button
+	return null
+
+func check_map_badge(name: String, detail: String) -> void:
+	var badge = map_badge(name)
+	if badge==null or not root.get_visible_rect().encloses(badge.get_global_rect()) or detail not in badge.accessibility_description:
+		push_error("The map badge must identify the confirmed result or order: %s" % name)
+		status = 1
+		return
+	for label in ui.screen_body.find_children("*","Label",true,false):
+		if label.is_visible_in_tree() and detail in label.text:
+			push_error("Map details should start collapsed: %s" % name)
+			status = 1
+	var tab = InputEventKey.new()
+	tab.keycode = KEY_TAB
+	tab.physical_keycode = KEY_TAB
+	for step in 8:
+		if badge.has_focus(): break
+		tab.pressed = true
+		root.push_input(tab)
+		tab = tab.duplicate()
+		tab.pressed = false
+		root.push_input(tab)
+		tab = tab.duplicate()
+		await process_frame
+	if not badge.has_focus():
+		push_error("Tab must reach the map badge: %s" % name)
+		status = 1
+		return
+	await snap("map-badge-"+name)
+	for label in ui.screen_body.find_children("*","Label",true,false):
+		if label.text==badge.accessibility_description and label.is_visible_in_tree() and root.get_visible_rect().encloses(label.get_global_rect()) and label.get_visible_line_count()==label.get_line_count():
+			confirm_with_enter()
+			await process_frame
+			if label.is_visible_in_tree() or not badge.has_focus():
+				push_error("Enter must close the map detail without moving focus: %s" % name)
+				status = 1
+			return
+	push_error("Focusing the map badge must show its full detail: %s" % name)
+	status = 1
+
 func camp_edges() -> void:
 	ui.text_zoom = 1.18
 	ui.build_theme()
@@ -78,12 +122,14 @@ func camp_edges() -> void:
 		status = 1
 	ui.choose_perk(ui.game.offerings[0].id)
 	await snap("narrow-recruit-confirmed")
-	if recruit not in ui.game.hero_keys or "합류 확정" not in camp_labels() or ui.audio_sequence!=0:
+	var recruit_name = "대길 합류" if ui.confirmed_draft.get("face",0)==18 else "등용 합류"
+	await check_map_badge(recruit_name,Campaign.HEROES[recruit][0]+" 합류 확정")
+	if recruit not in ui.game.hero_keys or ui.audio_sequence!=0:
 		push_error("The saved recruit must be announced on the map")
 		status = 1
 	ui.continue_run()
 	await process_frame
-	if "합류 확정" in camp_labels() or ui.audio_sequence!=0:
+	if map_badge(recruit_name)!=null or ui.audio_sequence!=0:
 		push_error("Reloading a map checkpoint must not replay the confirmed result")
 		status = 1
 	# The imported pending result exercises a duplicate even if the normal roll is a recruit.
@@ -256,14 +302,20 @@ func order_edges() -> void:
 		if not root.get_visible_rect().encloses(ui.map_prompt.get_global_rect()) or not root.get_visible_rect().encloses(ui.primary_button.get_global_rect()):
 			push_error("The confirmed result must leave the map controls and prompt visible")
 			status = 1
-		if "18면 대길" not in camp_labels() or outcome not in camp_labels() or ui.audio_sequence!=0:
-			push_error("Confirmed result must identify both 18 and its saved outcome while muted")
-			status = 1
+		var badge_name = "대길 승급" if promoted else "대길 환전"
+		await check_map_badge(badge_name,"등용 확정 / 18면 대길 / "+outcome)
+		var has_ration = map_badge("군량 순환 군령")!=null
+		if promoted:
+			await check_map_badge("군량 순환 군령","군령 / 군량 순환 / 조참 최대 및 시작 MP +4")
 		ui.show_phase()
-		if outcome not in camp_labels() or ui.dice_view.get("reveal_elapsed")<.74 or ui.audio_sequence!=0:
+		await check_map_badge(badge_name,"등용 확정 / 18면 대길 / "+outcome)
+		if ui.dice_view.get("reveal_elapsed")<.74 or ui.audio_sequence!=0:
 			push_error("Rebuilding the map must preserve the result without replaying it")
 			status = 1
-		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted) or ("조참 최대 및 시작 MP +4" in camp_labels())!=promoted:
+		if has_ration!=promoted:
+			push_error("Only a promotion with ration cycle must add its order badge")
+			status = 1
+		if ui.game.phase!="map" or ui.game.supply!=example[2] or state.get("supply")!=example[2] or state.get("streams")!=before.streams or ui.game.promotion_level("cao")!=int(promoted):
 			push_error("Saved supply, rank or RNG differs from the forecast")
 			status = 1
 	var convoy = camp.duplicate(true)
@@ -283,7 +335,7 @@ func order_edges() -> void:
 		await process_frame
 		await process_frame
 		for control in ui.screen_body.find_children("*","Control",true,false):
-			if (control is Label or control is Button) and not root.get_visible_rect().encloses(control.get_global_rect()):
+			if (control is Label or control is Button) and control.is_visible_in_tree() and not root.get_visible_rect().encloses(control.get_global_rect()):
 				push_error("The confirmed convoy route or prompt is clipped: %s" % control.text)
 				status = 1
 	print("Convoy map / all labels and buttons inspected in ",root.size)
@@ -389,8 +441,7 @@ func ration_heal(camp: Dictionary) -> void:
 		status = 1
 	confirm_with_enter()
 	await snap("orders-heal-map")
-	if not "소하 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" in camp_labels():
-		status = 1
+	await check_map_badge("군량 순환 군령","소하 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10")
 	ui.choose_route(0)
 	ui.complete_travel()
 	var game = ui.game
