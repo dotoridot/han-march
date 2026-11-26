@@ -1,5 +1,7 @@
 extends RefCounted
 
+signal arrow_released(projectile: Dictionary)
+
 const PLAN = preload("res://assets/march.tres")
 const Ally = preload("res://ally.gd")
 const Strike = preload("res://strike.gd")
@@ -507,7 +509,9 @@ func contact(u: Dictionary) -> void:
 	traces.append({"p":u.p,"life":0.18,"kind":u.weapon,"dir":direction,"reach":distance,
 		"attack_id":u.attack.id,"tick":step_number,"special":u.attack.special})
 	if u.weapon == "bow":
-		strikes.append({"origin":u.p,"p":u.p,"dir":direction,"left":distance,"actor":u,"power":power,"attack_id":u.attack.id})
+		var projectile = {"origin":u.p,"p":u.p,"dir":direction,"left":distance,"actor":u,"power":power,"attack_id":u.attack.id}
+		strikes.append(projectile)
+		arrow_released.emit(projectile)
 		queue_cue("loose",1)
 		return
 	var touched := false

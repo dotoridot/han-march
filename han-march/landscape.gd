@@ -29,9 +29,10 @@ var key_light: PointLight2D
 var warm_light: PointLight2D
 var actors: Dictionary = {}
 var actor_count := 0
-var bow_origins: Dictionary = {}
+var release_bow: Figure
 
 func _ready() -> void:
+	game.arrow_released.connect(capture_bow_release)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	chip_font = FontVariation.new()
@@ -85,7 +86,6 @@ func sync_figures() -> void:
 			for rig in actors.values(): rig.queue_free()
 			actors.clear()
 		actor_count = 0
-		bow_origins.clear()
 		return
 	var factor = minf(size.x/MAP.x,size.y/MAP.y)
 	figures.position = (size-MAP*factor)*0.5
@@ -112,18 +112,18 @@ func sync_figures() -> void:
 			actors.erase(uid)
 	actor_count = bodies.size()
 	warm_light.position = Vector2(272,131) if reduce_motion else game.team[0].p+Vector2(-46,-63)
-	var flying := {}
-	for arrow in game.strikes:
-		flying[arrow.attack_id] = true
-		if not bow_origins.has(arrow.attack_id):
-			var shooter: Figure = actors.get(arrow.actor.uid)
-			var tip = figures.to_local(shooter.tool.to_global(Vector2(32,0))) if shooter!=null else arrow.p+Vector2(0,-20)
-			bow_origins[arrow.attack_id] = tip-arrow.get("origin",arrow.p)
-	for attack_id in bow_origins.keys():
-		if not flying.has(attack_id): bow_origins.erase(attack_id)
+
+func capture_bow_release(projectile: Dictionary) -> void:
+	if not is_instance_valid(release_bow):
+		release_bow = Figure.new()
+		add_child(release_bow)
+		release_bow.setup("han","bow")
+	release_bow.present(projectile.actor,reduce_motion,false)
+	release_bow.hide()
+	projectile["visual_offset"] = get_global_transform().affine_inverse() * release_bow.tool.to_global(Vector2(32,0))
 
 func visible_arrow(arrow: Dictionary) -> Vector2:
-	var offset: Vector2 = bow_origins.get(arrow.attack_id,Vector2(0,-20))
+	var offset: Vector2 = arrow.get("visual_offset",Vector2(0,-20))
 	var flown: float = arrow.p.distance_to(arrow.get("origin",arrow.p))
 	return arrow.p+offset.lerp(Vector2(0,-15),clampf(flown/90.0,0,1))
 

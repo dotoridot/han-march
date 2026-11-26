@@ -207,8 +207,8 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 	elif weapon=="spear":
 		offhand = hand-forward*11
 	aim_limb(arms[0],forearms[0],offhand,ARM,WRIST,-1.0)
-	tool.rotation = angle-arms[1].rotation-forearms[1].rotation
+	tool.rotation = angle-core.rotation-arms[1].rotation-forearms[1].rotation
 	if guard!=null:
 		guard.rotation = -arms[0].rotation-forearms[0].rotation+direction.x*0.2
 	if arrow!=null:
-		arrow.rotation = angle-arms[0].rotation-forearms[0].rotation
+		arrow.rotation = angle-core.rotation-arms[0].rotation-forearms[0].rotation

@@ -130,12 +130,46 @@ func weapon_proof(id: String) -> void:
 			expect(unit.attack.contact and unit.attack.node.painted_pose==3,"Original contact tick unchanged")
 			var character = rig(unit)
 			var tool = character.tool
-			expect(absf(wrapf(tool.global_rotation,-PI,PI))<0.17,"Weapon agrees with horizontal attack direction")
+			var displayed_direction = (tool.to_global(Vector2.RIGHT)-tool.global_position).normalized()
+			expect(absf(displayed_direction.angle_to(unit.attack.dir))<0.001,"Weapon follows the world-space attack direction at contact")
 			expect(tool.global_position.distance_to(character.forearms[1].to_global(Vector2(0,Figure.WRIST)))<0.01,"Weapon is attached to the gripping wrist")
 			if id=="han":
 				expect(game.strikes.size()==1 and field.visible_arrow(game.strikes[0]).y<game.strikes[0].p.y-8,"Bolt origin follows the illustrated bow without changing rules coordinates")
 	expect(opponent.hp<opponent.max_hp,"Target receives damage from existing rules")
 	print(id," contact=",impact," recovery=",duration-impact," paired_samples=",frame_count+1," target_hp=",opponent.hp)
+
+func bow_release_checks() -> void:
+	var origin = Vector2(290,193)
+	var release_offset = Vector2.ZERO
+	var step_count = 8
+	for scenario in ["contact","delayed","removed"]:
+		game.clear_battle()
+		game.barrier.clear()
+		var shooter = game.make_actor("han",origin)
+		var witness = game.make_actor("liu",Vector2(206,144))
+		game.team = [shooter,witness]
+		field.sync_figures()
+		game.attack(shooter,origin + Vector2.RIGHT*100)
+		for _tick in shooter.attack.impact:
+			game.step_attack(shooter)
+		var projectile: Dictionary = game.strikes[0]
+		if scenario=="contact":
+			field.sync_figures()
+			var bow = rig(shooter).tool
+			release_offset = field.figures.to_local(bow.to_global(Vector2(32,0)))-origin
+			expect(field.visible_arrow(projectile).distance_to(origin+release_offset)<0.01,"Arrow starts at the contact bow tip")
+			continue
+		for _tick in step_count:
+			game.step_attack(shooter)
+			game.move_projectiles(Rules.STEP)
+		shooter.p += Vector2(14,11)
+		if scenario=="removed":
+			shooter.hp = 0
+			game.team.erase(shooter)
+		field.sync_figures()
+		var expected: Vector2 = projectile.p+release_offset.lerp(Vector2(0,-15),projectile.p.distance_to(origin)/90.0)
+		expect(field.visible_arrow(projectile).distance_to(expected)<0.01,"Delayed render retains the release tip: "+scenario)
+		expect(projectile.origin==origin and projectile.dir==Vector2.RIGHT and projectile.p.distance_to(origin+Vector2.RIGHT*330.0*Rules.STEP*step_count)<0.01,"Release visualization preserves the rules trajectory: "+scenario)
 
 func verify() -> void:
 	expect(DisplayServer.get_name()=="headless","No desktop display backend")
@@ -159,6 +193,7 @@ func verify() -> void:
 	expect(field.key_light.range_item_cull_mask==Figure.BONE_MASK and field.warm_light.range_item_cull_mask==Figure.BONE_MASK,"Lights affect the figure mask")
 	expect(field.overlay.material.light_mode==CanvasItemMaterial.LIGHT_MODE_UNSHADED,"HUD and response layer are not lit")
 	for id in ["liu","fan","han"]: weapon_proof(id)
+	bow_release_checks()
 	game.clear_battle()
 	game.targets.clear()
 	for id in Rules.HEROES:
