@@ -226,24 +226,79 @@ func test_full_paths() -> void:
 	reset.setup(loss.journal)
 	want(reset.journal.has("lost") and reset.rolled.is_empty() and reset.team.all(func(u): return u.skills.is_empty()),"Loss resets run but archive survives")
 
+func modal_click(point: Vector2, pressed: bool) -> void:
+	var event = InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	event.position = point
+	event.global_position = point
+	Input.parse_input_event(event)
+	Input.flush_buffered_events()
+
 func modal_checks() -> void:
+	root.size = Vector2i(1280,800)
 	var app = load("res://main.tscn").instantiate()
 	root.add_child(app)
 	app.set_process(false)
 	app.set_physics_process(false)
 	app.begin()
+	var actor: Dictionary = app.run.team[0]
 	for kind in ["pause","journal"]:
+		actor.attack = {}
 		app.rebuild_overlay(kind)
 		await process_frame
-		var click = InputEventMouseButton.new()
-		click.button_index = MOUSE_BUTTON_LEFT
-		click.pressed = true
-		click.position = app.sheet.get_global_rect().get_center()
-		app._input(click)
-		want(app.view==kind,"Inside click keeps "+kind+" open")
-		click.position = Vector2.ZERO
-		app._input(click)
-		want(app.view.is_empty(),"Outside click closes "+kind)
+		await process_frame
+		var sheet_bounds = app.sheet.get_global_rect()
+		var surface = app.picture.get_global_rect()
+		var click = surface.position+Vector2(5.0,surface.size.y/2.0)
+		want(surface.has_point(click) and not sheet_bounds.has_point(click),"Dismissal fixture is both outside "+kind+" and over the battlefield")
+		modal_click(click,true)
+		want(app.view.is_empty() and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT),"Outside click closes "+kind+" while the mouse is held")
+		if app.view.is_empty():
+			for _tick in 3:
+				app.advance_field(0.016)
+			want(actor.attack.is_empty(),"Dismissal press does not attack while held after "+kind)
+		modal_click(click,false)
+		actor.attack = {}
+		app.advance_field(0.016)
+		want(actor.attack.is_empty(),"Releasing the dismissal press does not attack after "+kind)
+		modal_click(click,true)
+		app.advance_field(0.016)
+		want(not actor.attack.is_empty(),"Fresh click attacks after releasing "+kind)
+		actor.attack = {}
+		app.click_attack = false
+		app.advance_field(0.016)
+		want(not actor.attack.is_empty(),"Normal mouse hold still attacks after "+kind)
+		modal_click(click,false)
+
+		app.rebuild_overlay(kind)
+		await process_frame
+		var escape = InputEventKey.new()
+		escape.physical_keycode = KEY_ESCAPE
+		escape.pressed = true
+		Input.parse_input_event(escape)
+		Input.flush_buffered_events()
+		want(app.view.is_empty(),"Escape closes "+kind)
+		var escape_release = InputEventKey.new()
+		escape_release.physical_keycode = KEY_ESCAPE
+		Input.parse_input_event(escape_release)
+		Input.flush_buffered_events()
+
+		app.rebuild_overlay(kind)
+		await process_frame
+		await process_frame
+		var close_button: Button
+		for button in app.modal_body.find_children("*","Button",true,false):
+			if button.text in ["닫기","전투 계속"]:
+				close_button = button
+				break
+		want(is_instance_valid(close_button),"Close button is present in "+kind)
+		if is_instance_valid(close_button):
+			var point = close_button.get_global_rect().get_center()
+			modal_click(point,true)
+			want(app.view==kind,"Inside button press keeps "+kind+" until release")
+			modal_click(point,false)
+			want(app.view.is_empty(),"Inside close button dismisses "+kind)
 	app.queue_free()
 	await process_frame
 
