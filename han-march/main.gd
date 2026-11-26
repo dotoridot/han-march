@@ -14,6 +14,9 @@ const NIGHT = Color("181310")
 const PANEL = Color("2a201a")
 const PRIMARY = Color("914420")
 const IMMEDIATE = Color("facf8c")
+const MAP_INK = Color("222120f0")
+const MAP_SECONDARY = Color("ddd4c5")
+const MAP_ICONS = preload("res://assets/strategy_routes.svg")
 const AUDIO_SLOTS = 4
 const CUE_PITCHES = [1.0,0.97,1.03,0.99,1.02]
 
@@ -25,6 +28,8 @@ var mounted_map: MountedMap
 var seal_view: FeatureModel
 var dice_view: FeatureModel
 var map_prompt: Label
+var map_overlay: MarginContainer
+var map_choices: Array[Button] = []
 var map_prompt_index := -2
 var skill_status: Label
 var confirmed_draft: Dictionary = {}
@@ -209,7 +214,14 @@ func build_shell() -> void:
 	background.color = NIGHT
 	background.mouse_filter = MOUSE_FILTER_IGNORE
 	full(self,background)
+	mounted_map = MountedMap.new()
+	full(self,mounted_map)
+	mounted_map.hide()
+	mounted_map.route_pressed.connect(choose_route)
+	mounted_map.route_hovered.connect(set_map_hover)
+
 	var margin = MarginContainer.new()
+	margin.mouse_filter = MOUSE_FILTER_IGNORE
 	for edge in ["margin_left","margin_right","margin_top","margin_bottom"]:
 		margin.add_theme_constant_override(edge,18)
 	full(self,margin)
@@ -230,14 +242,17 @@ func build_shell() -> void:
 	landscape.custom_minimum_size.y = 134
 	landscape.game = game
 	viewport_panel.add_child(landscape)
-	mounted_map = MountedMap.new()
-	viewport_panel.add_child(mounted_map)
-	mounted_map.hide()
 	seal_view = FeatureModel.new()
 	seal_view.custom_minimum_size.y = 125
 	viewport_panel.add_child(seal_view)
 	seal_view.hide()
 	screen_body = column(stage,8)
+	map_overlay = MarginContainer.new()
+	map_overlay.mouse_filter = MOUSE_FILTER_IGNORE
+	for edge in ["margin_left","margin_right","margin_top","margin_bottom"]:
+		map_overlay.add_theme_constant_override(edge,16)
+	full(self,map_overlay)
+	map_overlay.hide()
 	modal = ColorRect.new()
 	modal.color = Color("15100edc")
 	full(self,modal)
@@ -265,13 +280,18 @@ func defer_focus(node: Control) -> void:
 	if is_instance_valid(node) and node.is_visible_in_tree() and (not node is BaseButton or not node.disabled):
 		node.grab_focus()
 
-func note_dialogue(parent: Node, key: String) -> void:
-	var label = words(parent,"",16,SUBTLE,true)
+func note_dialogue(parent: Control, key: String, tooltip := false) -> void:
+	var label = words(parent,"",16,SUBTLE,true) if not tooltip else null
 	var line_data = await manager.get_next_dialogue_line(text_data,key,[{"fantasy":game.mode=="fiction","has_xiang":"xiang" in game.hero_keys,
 		"first_rescue":game.rescue_order.front() if not game.rescue_order.is_empty() else "",
 		"approach":game.selected_route}])
-	if line_data!=null and is_instance_valid(label):
-		label.text = "%s  %s" % [line_data.character,line_data.text]
+	if line_data==null or not is_instance_valid(parent) or parent.is_queued_for_deletion():
+		return
+	var line = "%s  %s" % [line_data.character,line_data.text]
+	if tooltip:
+		parent.tooltip_text = line
+	elif is_instance_valid(label):
+		label.text = line
 
 func show_phase(reveal_draft := false) -> void:
 	var old_phase = announced_phase
@@ -283,21 +303,32 @@ func show_phase(reveal_draft := false) -> void:
 		confirmed_draft.clear()
 	if game.phase=="battle" and old_phase!="battle":
 		inspected_ally = -1
-	screen_body.size_flags_vertical = SIZE_FILL
+	var on_map: bool = game.phase in ["map","travel"]
+	var body_parent: Control = map_overlay if on_map else stage
+	if screen_body.get_parent()!=body_parent:
+		screen_body.reparent(body_parent,false)
+		if not on_map:
+			stage.move_child(screen_body,-1)
+	screen_body.mouse_filter = MOUSE_FILTER_IGNORE if on_map else MOUSE_FILTER_PASS
+	screen_body.size_flags_vertical = SIZE_EXPAND_FILL if on_map else SIZE_FILL
+	stage.visible = not (on_map or modal_active)
+	map_overlay.visible = on_map and not modal_active
 	landscape.display = "battle" if game.phase=="battle" else "map"
 	landscape.reduce_motion = motion_reduced
 	landscape.text_zoom = text_zoom
-	viewport_panel.visible = game.phase in ["title","map","travel","battle","ending","lost"]
-	mounted_map.visible = game.phase in ["map","travel"]
+	viewport_panel.visible = game.phase in ["title","battle","ending","lost"]
+	mounted_map.visible = on_map
 	seal_view.visible = game.phase=="title"
 	seal_view.reduced = motion_reduced
 	landscape.visible = game.phase in ["battle","ending","lost"]
-	mounted_map.custom_minimum_size.y = 150 if game.phase=="map" else 180
 	landscape.custom_minimum_size.y = 206 if game.phase=="battle" else 125
 	if mounted_map.visible:
 		if old_phase=="camp" and game.phase=="map": march_at = MountedMap.TRAILS[0][0]
 		mounted_map.point = march_at
-		mounted_map.setup(game.chapter,game.entry().routes,game.supply)
+		if old_phase not in ["map","travel"]:
+			mounted_map.fit_routes(0.0,0.0)
+		var branch: int = game.selected_route if game.phase=="travel" else -1
+		mounted_map.setup(game.chapter,game.entry().routes,game.supply,text_zoom,branch)
 	primary_button = null
 	match game.phase:
 		"title":
@@ -305,9 +336,18 @@ func show_phase(reveal_draft := false) -> void:
 		"map":
 			map_view(reveal_draft)
 		"travel":
-			words(screen_body,"%s으로 이동 중" % game.entry().name,22,GOLD)
-			words(screen_body,"경유지 %s" % game.entry().routes[game.selected_route][0],15,SUBTLE)
-			primary_button = action(screen_body,"전장으로",complete_travel,true)
+			map_header(game.entry())
+			screen_body.add_spacer(false).mouse_filter = MOUSE_FILTER_IGNORE
+			var strip = row(screen_body)
+			var destination = column(strip,3)
+			destination.size_flags_horizontal = SIZE_EXPAND_FILL
+			var approach: String = game.entry().routes[game.selected_route][0]
+			var panel = PanelContainer.new()
+			panel.add_theme_stylebox_override("panel",skin(MAP_INK,10))
+			destination.add_child(panel)
+			words(panel,"%s 선택 / %s 이동 중" % [approach,game.entry().name],17,PAPER,true)
+			primary_button = action(strip,"전장으로",complete_travel)
+			map_button_skin(primary_button)
 		"battle":
 			battle_view()
 		"camp":
@@ -316,7 +356,8 @@ func show_phase(reveal_draft := false) -> void:
 			result_view()
 	landscape.queue_redraw()
 	if primary_button!=null and not modal_active:
-		defer_focus.call_deferred(primary_button)
+		var focus = map_choices[1] if game.phase=="map" and primary_button.disabled else primary_button
+		defer_focus.call_deferred(focus)
 
 func title_view() -> void:
 	words(screen_body,"초한: 한왕의 길",41)
@@ -368,20 +409,71 @@ func start_run(mode: String) -> void:
 	show_phase()
 	save()
 
+func map_button_skin(button: Button) -> void:
+	for state in [["normal","262320ed"],["hover","6d2921f5"],["pressed","912c22"],
+			["disabled","36312def"]]:
+		var surface = skin(Color(state[1]),11)
+		surface.shadow_color = Color("1b151447")
+		surface.shadow_size = 5
+		surface.shadow_offset = Vector2(0,3)
+		button.add_theme_stylebox_override(state[0],surface)
+	button.mouse_default_cursor_shape = CURSOR_ARROW if button.disabled else CURSOR_POINTING_HAND
+
+func map_header(data: Dictionary) -> void:
+	var headline = row(screen_body,8)
+	var heading = PanelContainer.new()
+	heading.add_theme_stylebox_override("panel",skin(MAP_INK,9))
+	headline.add_child(heading)
+	var headings = row(heading,11)
+	words(headings,data.name,25,PAPER)
+	var date = words(headings,data.year,14,MAP_SECONDARY)
+	date.size_flags_vertical = SIZE_SHRINK_CENTER
+	heading.tooltip_text = "지형과 경유지는 창작입니다."
+	headline.add_spacer(false)
+	var logistics = PanelContainer.new()
+	logistics.add_theme_stylebox_override("panel",skin(MAP_INK,9))
+	headline.add_child(logistics)
+	var counts = row(logistics,10)
+	var supply = words(counts,"보급 %d" % game.supply,17,GOLD)
+	supply.size_flags_vertical = SIZE_SHRINK_CENTER
+	var seed = words(counts,"시드 %d" % game.seed_value,14,MAP_SECONDARY)
+	seed.size_flags_vertical = SIZE_SHRINK_CENTER
+	var menu = action(headline,"메뉴",show_menu)
+	map_button_skin(menu)
+
 func map_view(reveal_draft: bool) -> void:
-	var data = game.entry()
+	var data: Dictionary = game.entry()
 	var orders: Array = game.names_upgrades["liu"]
-	var headline = row(screen_body)
+	map_header(data)
+	var upper = row(screen_body,12)
+	var notes = PanelContainer.new()
+	notes.add_theme_stylebox_override("panel",skin(MAP_INK,6))
 	var has_draft = not confirmed_draft.is_empty()
-	words(headline,"%s  /  %s" % [data.year,data.name],23,GOLD,has_draft)
+	notes.custom_minimum_size.x = 290 if has_draft else 380
+	notes.size_flags_vertical = SIZE_SHRINK_BEGIN
+	upper.add_child(notes)
+	var story = column(notes,1)
+	story.size_flags_horizontal = SIZE_EXPAND_FILL
+	var names: Array[String] = []
+	for hero in game.hero_keys:
+		names.append(Campaign.HEROES[hero][0])
+	words(story,"유방의 군세 / %s" % "  ".join(names),14,PAPER,true)
+	note_dialogue(notes if has_draft else story,data.id,has_draft)
+	upper.add_spacer(false)
+	if not game.ration_hero.is_empty():
+		words(story,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" %
+			Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
 	if has_draft:
-		mounted_map.custom_minimum_size.y = 100
-		var result = row(headline,4)
-		result.size_flags_horizontal = SIZE_EXPAND_FILL
+		var panel = PanelContainer.new()
+		panel.add_theme_stylebox_override("panel",skin(MAP_INK,7))
+		panel.custom_minimum_size.x = 400
+		panel.size_flags_vertical = SIZE_SHRINK_BEGIN
+		upper.add_child(panel)
+		var result = row(panel,6)
 		dice_view = FeatureModel.new()
 		dice_view.seal = false
 		dice_view.reduced = motion_reduced
-		dice_view.custom_minimum_size = Vector2(58,55)
+		dice_view.custom_minimum_size = Vector2(56,52)
 		result.add_child(dice_view)
 		dice_view.set_face(confirmed_draft.face,reveal_draft,confirmed_draft.color)
 		var details = column(result,2)
@@ -389,40 +481,90 @@ func map_view(reveal_draft: bool) -> void:
 		details.alignment = BoxContainer.ALIGNMENT_CENTER
 		words(details,"18면 대길" if confirmed_draft.face==18 else "%d면" % confirmed_draft.face,15,GOLD,true)
 		words(details,confirmed_draft.text,16,confirmed_draft.color,true)
-	else:
-		headline.add_spacer(false)
-	words(headline,"보급 %d   ·   시드 %d" % [game.supply,game.seed_value],15,SUBTLE)
-	note_dialogue(screen_body,data.id)
-	var choices = row(screen_body)
+
+	screen_body.add_spacer(false).mouse_filter = MOUSE_FILTER_IGNORE
+	var choices = row(screen_body,12)
+	map_choices.clear()
 	for i in data.routes.size():
-		var path = data.routes[i]
-		var choice = column(choices,4)
-		choice.size_flags_horizontal = SIZE_EXPAND_FILL
-		var b = action(choice,path[0],choose_route.bind(i),i==0)
-		b.disabled = game.supply + path[3]<0
-		if i==0: primary_button = b
-		words(choice,"%s  /  %s" % [path[1],path[2]],14,SUBTLE)
-		var forecast = game.preview_route(i)
-		words(choice,"%s · 적 %d명%s" % [forecast.weather,forecast.opponents,"(추격대 별도)" if game.chapter==1 else ""],14,GOLD,true)
+		var path: Array = data.routes[i]
+		var forecast: Dictionary = game.preview_route(i)
+		var locked: bool = game.supply + path[3]<0
+		var b = action(choices,"",choose_route.bind(i))
+		b.size_flags_horizontal = SIZE_EXPAND_FILL
+		b.disabled = locked
+		map_button_skin(b)
+		var content = MarginContainer.new()
+		content.mouse_filter = MOUSE_FILTER_IGNORE
+		for edge in ["margin_left","margin_right","margin_top","margin_bottom"]:
+			content.add_theme_constant_override(edge,10)
+		full(b,content)
+		var card = row(content,8)
+		card.mouse_filter = MOUSE_FILTER_IGNORE
+		var icon = TextureRect.new()
+		var route_icon = AtlasTexture.new()
+		route_icon.atlas = MAP_ICONS
+		route_icon.region = Rect2((game.chapter*2+i)*48,0,48,48)
+		icon.texture = route_icon
+		icon.custom_minimum_size = Vector2(36,36)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.size_flags_vertical = SIZE_SHRINK_CENTER
+		icon.modulate = Color("b1a39d") if locked else Color.WHITE
+		icon.mouse_filter = MOUSE_FILTER_IGNORE
+		card.add_child(icon)
+		var details = column(card,2)
+		details.mouse_filter = MOUSE_FILTER_IGNORE
+		details.size_flags_horizontal = SIZE_EXPAND_FILL
+		var title = words(details,"%s%s" % [path[0]," / 보급 부족" if locked else ""],21,PAPER,true)
+		var summary = "%s / 적 %d명%s / %s" % [
+			forecast.weather,forecast.opponents,"(추격대 별도)" if game.chapter==1 else "",path[2]]
+		words(details,summary,14,GOLD,true)
+		words(details,path[1],14,MAP_SECONDARY,true)
 		if "last_stand" in orders and game.supply+path[3]==0:
-			words(choice,"배수진 적용 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
-	if not game.ration_hero.is_empty():
-		words(screen_body,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" % Campaign.HEROES[game.ration_hero][0],14,GOLD,true)
-	map_prompt = words(screen_body,"",14,PAPER,true)
+			words(details,"배수진 적용 / 공격 피해 +30%, 특기 대기 -25%",14,GOLD,true)
+		b.accessibility_name = title.text
+		b.accessibility_description = "%s / %s" % [summary,path[1]]
+		content.minimum_size_changed.connect(func(): b.custom_minimum_size = content.get_combined_minimum_size())
+		b.custom_minimum_size = content.get_combined_minimum_size()
+		b.mouse_entered.connect(set_map_hover.bind(i))
+		b.mouse_exited.connect(set_map_hover.bind(-1))
+		b.focus_entered.connect(set_map_focus.bind(i))
+		b.focus_exited.connect(set_map_focus.bind(-1))
+		map_choices.append(b)
+		if i==0: primary_button = b
+
+	var help = PanelContainer.new()
+	help.add_theme_stylebox_override("panel",skin(MAP_INK,8))
+	screen_body.add_child(help)
+	map_prompt = words(help,"",14,PAPER,true)
 	map_prompt_index = -2
 	refresh_map_prompt(mounted_map.nearby)
-	words(screen_body,"지형과 경유지는 창작입니다.",13,SUBTLE)
+	var fit = fit_map_routes.bind(upper,choices)
+	upper.item_rect_changed.connect(fit.call_deferred)
+	choices.item_rect_changed.connect(fit.call_deferred)
+	fit.call_deferred()
+
+func fit_map_routes(upper: Control, choices: Control) -> void:
+	if game.phase=="map" and is_instance_valid(upper) and upper.is_inside_tree() and choices.is_inside_tree():
+		mounted_map.fit_routes(upper.get_global_rect().end.y+54,choices.global_position.y-18)
+
+func set_map_hover(index: int) -> void:
+	mounted_map.hovered_route = index
+	mounted_map.queue_redraw()
+
+func set_map_focus(index: int) -> void:
+	mounted_map.focused_route = index
+	mounted_map.queue_redraw()
 
 func refresh_map_prompt(index: int) -> void:
 	if not is_instance_valid(map_prompt) or map_prompt_index==index: return
 	map_prompt_index = index
 	if index<0:
-		map_prompt.text = "WASD 또는 방향키로 말을 모세요. 깃발 가까이에서 E로 출발하거나 Tab으로 경유지를 고르세요."
+		map_prompt.text = "WASD 또는 방향키로 이동 / 깃발 근처에서 E 출정 / 깃발이나 카드 선택"
 	else:
 		var path: Array = game.entry().routes[index]
 		var suffix = "보급 부족으로 출발할 수 없습니다." if game.supply+path[3]<0 else "E로 출발"
-		var forecast = game.preview_route(index)
-		map_prompt.text = "%s / %s, %s, 적 %d명 / %s / %s" % [path[0],path[2],forecast.weather,forecast.opponents,game.entry().goal,suffix]
+		map_prompt.text = "%s / %s / %s" % [path[0],game.entry().goal,suffix]
 
 func choose_route(index: int) -> void:
 	var before = game.checkpoint()
@@ -772,12 +914,18 @@ func activate_modal() -> void:
 	empty(modal_content)
 	modal.show()
 	stage.hide()
+	map_overlay.hide()
 
 func close_modal() -> void:
 	modal_active = false
 	modal.hide()
-	stage.show()
-	if is_instance_valid(resume_control): defer_focus.call_deferred(resume_control)
+	var on_map: bool = game.phase in ["map","travel"]
+	stage.visible = not on_map
+	map_overlay.visible = on_map
+	if is_instance_valid(resume_control):
+		defer_focus.call_deferred(resume_control)
+	elif on_map and is_instance_valid(primary_button):
+		defer_focus.call_deferred(map_choices[1] if game.phase=="map" and primary_button.disabled else primary_button)
 
 func show_menu() -> void:
 	activate_modal()

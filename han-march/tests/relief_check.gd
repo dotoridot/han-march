@@ -50,6 +50,84 @@ func ride_branch(branch: int) -> void:
 		step_to(target)
 	stop()
 
+func click_map(at: Vector2) -> void:
+	var hover = InputEventMouseMotion.new()
+	hover.position = at
+	root.push_input(hover)
+	for pressed in [true,false]:
+		var click = InputEventMouseButton.new()
+		click.position = at
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.pressed = pressed
+		root.push_input(click)
+
+func map_layout() -> void:
+	app.game.new_run(12345,"history")
+	app.show_phase()
+	await process_frame
+	await process_frame
+	var map = app.mounted_map
+	var has_flat_map: bool = not map is SubViewportContainer and map.get_global_rect()==root.get_visible_rect()
+	expect(has_flat_map,"The strategy map is a 2D control covering the full window")
+	if not has_flat_map:
+		return
+	for window_size in [Vector2i(1280,800),Vector2i(760,544)]:
+		root.size = window_size
+		app.text_zoom = 1.18 if window_size.x==760 else 1.0
+		app.build_theme()
+		for chapter in 4:
+			for route in 2:
+				app.game.new_run(12345,"history")
+				app.game.chapter = chapter
+				app.march_at = Relief.TRAILS[0][0]
+				app.show_phase()
+				app.confirmed_draft = {"face":18,"text":"조참 중복, 보급 전환 확정 / 황금 눈으로 추가 보급, 보급 상한을 적용했습니다.",
+					"color":Color("e5b75d")}
+				app.game.ration_hero = "xiao"
+				app.show_phase()
+				await process_frame
+				await process_frame
+				var flag: Button = map.flags[route]
+				var card: Button = app.map_choices[route]
+				var label: Label = map.nameplates[route]
+				var flag_rect = flag.get_global_rect()
+				var bounds = root.get_visible_rect()
+				expect(bounds.encloses(flag_rect) and bounds.encloses(card.get_global_rect()) and
+					bounds.encloses(app.map_prompt.get_global_rect()),"Route controls and full help fit at %s, chapter %d route %d" %
+					[window_size,chapter,route])
+				expect(label.text==app.game.entry().routes[route][0] and card.accessibility_name==label.text,
+					"Flag and card use the same route name as the campaign")
+				expect(not flag_rect.intersects(card.get_global_rect()),"Cards keep each flag's hit target clear")
+				var preview: Dictionary = app.game.preview_route(route)
+				click_map(flag_rect.get_center())
+				expect(app.game.phase=="travel" and app.game.selected_route==route and app.game.battle_seed==preview.seed,
+					"Mouse flag launches the forecast route at %s, chapter %d route %d" % [window_size,chapter,route])
+		app.game.new_run(12345,"history")
+		app.game.chapter = 1
+		app.game.supply = 0
+		app.show_phase()
+		await process_frame
+		await process_frame
+		var state: int = app.game.field_rng.state
+		expect(map.flags[0].disabled and app.map_choices[0].disabled and
+			app.map_choices[0].accessibility_name.contains("보급 부족") and app.map_choices[1].has_focus(),
+			"Supply lock is visible and keyboard focus moves to the available bypass")
+		click_map(map.flags[0].get_global_rect().get_center())
+		click_map(app.map_choices[0].get_global_rect().get_center())
+		expect(app.game.phase=="map" and app.game.field_rng.state==state,"Locked flag and card cannot depart")
+		click_map(app.map_choices[1].get_global_rect().get_center())
+		expect(app.game.phase=="travel" and app.game.selected_route==1,"The available route card can depart")
+		app.game.new_run(12345,"history")
+		app.game.chapter = 1
+		app.game.supply = 1
+		app.show_phase()
+		await process_frame
+		await process_frame
+		click_map(map.flags[0].get_global_rect().get_center())
+		expect(app.game.phase=="travel" and app.game.supply==0 and map.nameplates[0].text=="수변 나루",
+			"The selected ferry stays identified as departing after spending its last supply")
+	print("Full-window strategy map, flag/card pairing, layout and supply checks complete")
+
 func seal_check() -> void:
 	var seal = app.seal_view
 	var before: Quaternion = seal.pivot.quaternion
@@ -162,6 +240,14 @@ func verify() -> void:
 	await process_frame
 	await process_frame
 	expect(AudioServer.is_bus_mute(0),"Master is muted on test host")
+	if OS.get_environment("HAN_MARCH_MAP_LAYOUT_ONLY")=="1":
+		await map_layout()
+		print("Map layout checks ",checks-failures.size(),"/",checks)
+		app.queue_free()
+		await process_frame
+		await process_frame
+		quit(1 if not failures.is_empty() else 0)
+		return
 	seal_check()
 	campaign(12345,"history",[0,0,1,0])
 	app.motion_reduced = true
@@ -183,7 +269,7 @@ func verify() -> void:
 	key(KEY_W,false)
 	app._physics_process(Campaign.STEP)
 	var saved_point: Vector2 = map.point
-	expect(saved_point.y<unused.y and map.legs.all(func(leg): return is_zero_approx(leg.rotation.x)),"W moves the rider and reduced motion keeps gait static")
+	expect(saved_point.y<unused.y and is_zero_approx(map.gait),"W moves the rider and reduced motion keeps gait static")
 	app.back_to_title()
 	var config = ConfigFile.new()
 	expect(config.load(app.store_path)==OK,"Scene uses a real profile")

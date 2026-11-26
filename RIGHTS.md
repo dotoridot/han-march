@@ -16,10 +16,16 @@
 
 ## 기마 지도와 충돌음
 
-3D 지형, 인장, 주사위와 셰이더는 프로젝트에서 작성했습니다. [MengTo의 Skills 저장소](https://github.com/MengTo/Skills/tree/05043c3b37d20a6943762fc219a7797c214b8bb0)의 지도와 전투 연출 설명을 참고했습니다. 고대 청동 인장의 물성을 참고했으며 소장품 이미지와 데모 코드는 포함하지 않았습니다.
+초기 3D 지형, 인장, 주사위와 셰이더는 프로젝트에서 작성했습니다. [MengTo의 Skills 저장소](https://github.com/MengTo/Skills/tree/05043c3b37d20a6943762fc219a7797c214b8bb0)의 지도와 전투 연출 설명을 참고했습니다. 고대 청동 인장의 물성을 참고했으며 소장품 이미지와 데모 코드는 포함하지 않았습니다.
 
 [Kenney Impact Sounds](https://kenney.nl/assets/impact-sounds)의 CC0 샘플 네 개가 쓰입니다. 파일별 이름과 내려받은 고정 출처는 [충돌음 고지](han-march/licenses/Kenney-Impact-Sounds.txt)에 있습니다.
 
 ## 전투 일러스트와 파츠 메시
 
 전투용 두 SVG는 프로젝트의 벡터 도형으로 그렸습니다. 파츠 색과 높이판 소스, 굽기 코드, 생성된 PNG를 포함합니다. 다음 단계에서 추가한 윤곽 JSON도 같은 텍스처에서 굽습니다.
+
+## 전략 지도
+
+- `han-march/assets/strategy_map/`의 관중, 팽성, 형양, 해하 지형 원화는 이 프로젝트를 위해 OpenAI ImageGen으로 제작했습니다. 관중 원화를 화풍 참고로 사용해 각 지역의 산과 숲을 따로 생성한 뒤 게임용 WebP로 저장했습니다.
+- 기마 토큰, 군기, 마을과 경유지 픽토그램(`han-march/assets/strategy_*.svg`)은 프로젝트에서 직접 그렸습니다. 수계, 길, 라벨과 선택 표시는 캠페인 좌표에 맞춰 Godot에서 그립니다.
+- 전략 지도 그림에 포함된 제3자 게임 에셋은 없습니다. 이 저장소의 공개 범위와 작성자 자료의 사용 조건은 문서 첫 단락을 따릅니다.
