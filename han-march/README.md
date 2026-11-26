@@ -33,4 +33,14 @@ HAN_MARCH_PROFILE="$(mktemp -d)" "$GODOT" --headless --audio-driver Dummy --path
 "$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/dodge_window.gd
 ```
 
+### 파츠 외곽과 보조광 비교
+
+위 무음 설정과 import를 마친 뒤 비교 모드를 실행합니다.
+
+```sh
+HAN_MARCH_DIRECTION_COMPARE=1 "$GODOT" --headless --audio-driver Dummy --path han-march --script res://tests/illustration_check.gd
+```
+
+두 군집에서 파츠 투영 면적, 삼각형 수, 조명 수신 파츠 수와 CPU 동기화 시간을 출력합니다. 실제 화면 프레임, GPU 시간과 드로우 콜은 렌더러가 있는 실행에서 `HAN_MARCH_PROFILE_RENDER=1`을 지정할 때만 계측을 시도합니다. 무음 headless 비교에서는 이 값이 비어 있습니다.
+
 [공개 범위와 제3자 고지](../RIGHTS.md)
