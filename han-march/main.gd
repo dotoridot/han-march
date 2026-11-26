@@ -12,6 +12,8 @@ const NIGHT = Color("181310")
 const PANEL = Color("2a201a")
 const PRIMARY = Color("914420")
 const IMMEDIATE = Color("facf8c")
+const AUDIO_SLOTS = 4
+const CUE_PITCHES = [1.0,0.97,1.03,0.99,1.02]
 
 var game = Campaign.new()
 var body_font: FontVariation
@@ -56,7 +58,10 @@ var checkpoint_data: Dictionary = {}
 var save_error = false
 var introduction_open = false
 var store_path = "user://campaign.cfg"
-var audio_player: AudioStreamPlayer
+var audio_players: Array[AudioStreamPlayer] = []
+var audio_started: Array[int] = []
+var audio_next := 0
+var audio_sequence := 0
 var sounds: Dictionary = {}
 var impacts: Dictionary = {}
 var recorded_impacts := true
@@ -64,6 +69,7 @@ var hit_pending = false
 var dodge_pending = false
 var skill_pending = false
 var mouse_at = Vector2(300,200)
+var inspected_ally := -1
 var scene_variant_text = {
 	"안개":"안개: 활 사거리 감소","진흙":"진흙: 남쪽 이동 느림","고지":"고지: 낮은 곳의 적 이동이 느림"
 }
@@ -266,6 +272,8 @@ func show_phase() -> void:
 	var old_phase = announced_phase
 	empty(screen_body)
 	announced_phase = game.phase
+	if game.phase=="battle" and old_phase!="battle":
+		inspected_ally = -1
 	screen_body.size_flags_vertical = SIZE_FILL
 	landscape.display = "battle" if game.phase=="battle" else "map"
 	landscape.reduce_motion = motion_reduced
@@ -412,9 +420,9 @@ func battle_view() -> void:
 	trail_status = words(screen_body,game.entry().description,14,SUBTLE)
 	if game.chapter==3:
 		note_dialogue(screen_body,"gaixia_route")
-	field_status = words(screen_body,"",14,SUBTLE)
+	field_status = words(screen_body,"",14,SUBTLE,true)
 	skill_status = words(screen_body,"",14,PAPER,true)
-	words(screen_body,"WASD 이동 / 마우스 또는 J 공격 / Space 또는 Shift 회피 / E 길게 상호작용 / Esc 일시정지",14,SUBTLE,true)
+	words(screen_body,"WASD 이동 / 마우스 또는 J 공격 / Space 또는 Shift 회피 / E 길게 상호작용 / C 동료 확인 / Esc 일시정지",14,SUBTLE,true)
 	refresh_battle()
 
 func refresh_battle() -> void:
@@ -424,7 +432,20 @@ func refresh_battle() -> void:
 	var evasion = "회피 준비" if game.dodge_cd<=0 else "회피 %.1f초" % game.dodge_cd
 	action_status.text = "%s   /   %s   /   %s" % [status,evasion,game.tactic_name()]
 	trail_status.text = "예고가 보이면 좌우로 움직이며 Space 또는 Shift를 누르세요." if game.training_ticks>0 else (last_message if last_message_left>0 else game.entry().description)
-	field_status.text = scene_variant_text.get(game.field_rule,"") if game.scout_bonus.is_empty() else game.scout_bonus
+	var field_note: String = scene_variant_text.get(game.field_rule,"") if game.scout_bonus.is_empty() else game.scout_bonus
+	var allies = game.alive(game.team)
+	if not allies.is_empty():
+		var index = allies.find_custom(func(unit): return unit.uid==inspected_ally)
+		var ally: Dictionary = allies[maxi(0,index)]
+		inspected_ally = ally.uid
+		landscape.inspected_uid = inspected_ally
+		var detail = "%s  HP %d/%d  MP %d/%d  피로 %d/100" % [
+			Campaign.HEROES[ally.id][0],ceili(ally.hp),ally.max_hp,floori(ally.mp),ally.max_mp,roundi(ally.fatigue)]
+		field_status.text = detail if field_note.is_empty() else detail+"  /  "+field_note
+	else:
+		inspected_ally = -1
+		landscape.inspected_uid = -1
+		field_status.text = field_note
 	var id: String = game.player_skill
 	var player: Dictionary = game.team[0]
 	var cooldown: float = player.cool.get(id,0.0)
@@ -689,6 +710,12 @@ func _input(event: InputEvent) -> void:
 			if event.physical_keycode==KEY_R and not skill_pending:
 				game.cycle_skill()
 				get_viewport().set_input_as_handled()
+			if event.physical_keycode==KEY_C:
+				var allies = game.alive(game.team)
+				if not allies.is_empty():
+					var index = allies.find_custom(func(unit): return unit.uid==inspected_ally)
+					inspected_ally = allies[(index+1)%allies.size()].uid
+				get_viewport().set_input_as_handled()
 
 func _process(dt: float) -> void:
 	if not is_instance_valid(landscape):
@@ -753,9 +780,12 @@ func combat_input(dt: float) -> void:
 	skill_pending = false
 
 func build_sound() -> void:
-	audio_player = AudioStreamPlayer.new()
-	audio_player.volume_db = -18
-	add_child(audio_player)
+	for i in AUDIO_SLOTS:
+		var player = AudioStreamPlayer.new()
+		player.volume_db = -18
+		add_child(player)
+		audio_players.append(player)
+		audio_started.append(0)
 	impacts = {
 		"block":preload("res://assets/audio/impactMetal_heavy_000.ogg"),
 		"sword_impact":preload("res://assets/audio/impactPlate_medium_000.ogg"),
@@ -777,5 +807,18 @@ func build_sound() -> void:
 
 func play(which: String) -> void:
 	if AudioServer.is_bus_mute(0): return
-	audio_player.stream = impacts[which] if recorded_impacts and impacts.has(which) else sounds.get(which,sounds["impact"])
-	audio_player.play()
+	var slot = audio_next
+	for offset in AUDIO_SLOTS:
+		var candidate = (audio_next+offset)%AUDIO_SLOTS
+		if not audio_players[candidate].playing:
+			slot = candidate
+			break
+		if audio_started[candidate]<audio_started[slot]:
+			slot = candidate
+	var player = audio_players[slot]
+	player.stream = impacts[which] if recorded_impacts and impacts.has(which) else sounds.get(which,sounds["impact"])
+	player.pitch_scale = CUE_PITCHES[audio_sequence%CUE_PITCHES.size()]
+	player.play()
+	audio_sequence += 1
+	audio_started[slot] = audio_sequence
+	audio_next = (slot+1)%AUDIO_SLOTS

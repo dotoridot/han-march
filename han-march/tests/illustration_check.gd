@@ -114,16 +114,47 @@ func weapon_proof(id: String) -> void:
 	field.sync_figures()
 	picture(id+"-before-00",true)
 	picture(id+"-after-00")
+	var idle_tool: Transform2D = rig(unit).tool.global_transform
 	game.attack(unit,unit.p+Vector2.RIGHT*100)
+	field.sync_figures()
+	expect(rig(unit).tool.global_transform.is_equal_approx(idle_tool),"The first presentation key joins the idle weapon pose")
 	# Existing combat rules own this exact attack lifetime and contact tick.
 	var impact: int = unit.attack.impact
 	var duration: int = unit.attack.duration
 	var frame_count := 0
+	var held_prepare := Vector3.ZERO
+	var contact_key := Vector3.ZERO
 	for tick in duration:
+		var prior_tool: Transform2D = rig(unit).tool.global_transform
 		game.step_attack(unit)
 		game.move_projectiles(Rules.STEP)
 		opponent.hit = maxf(0,opponent.hit-Rules.STEP)
 		field.sync_figures()
+		var weapon_pose: Vector3 = rig(unit).phase_motion
+		if tick==0:
+			var first_tool: Transform2D = rig(unit).tool.global_transform
+			expect(first_tool.origin.distance_to(idle_tool.origin)/field.figures.scale.x<4.0 and absf(wrapf(first_tool.get_rotation()-idle_tool.get_rotation(),-PI,PI))<0.45,
+				"The first simulated attack tick blends from the idle grip")
+		if tick+1==int(impact*0.45):
+			held_prepare = weapon_pose
+		if tick+1==impact:
+			contact_key = weapon_pose
+			expect(absf(rig(unit).player.current_animation_position-0.55)<0.0001 and held_prepare.distance_to(contact_key)>0.5,
+				"The wind-up is distinct from the unchanged contact key")
+		if tick+1==impact+int((duration-impact)*0.45):
+			match id:
+				"liu":
+					expect(held_prepare.x<-0.80 and held_prepare.x>-1.75 and weapon_pose.x>0.66 and weapon_pose.z<2.3,
+						"The sword chambers and follows through with a lighter weight shift")
+				"fan":
+					expect(held_prepare.x<-1.70 and weapon_pose.x>0.77 and weapon_pose.z>2.1,
+						"The axe holds a deeper wind-up and a heavier follow-through")
+				"han":
+					expect(absf(held_prepare.x)<0.50 and held_prepare.y>11.0 and absf(weapon_pose.x)<0.32 and weapon_pose.y>9.0,
+						"The bow stays extended and closer to the aim line through release")
+		if tick+1==duration:
+			var final_tool: Transform2D = rig(unit).tool.global_transform
+			expect(prior_tool.origin.distance_to(final_tool.origin)<2.0 and absf(wrapf(prior_tool.get_rotation()-final_tool.get_rotation(),-PI,PI))<0.16,"The last attack tick joins the idle weapon pose")
 		if tick%2==0:
 			picture("%s-before-%02d" % [id,frame_count+1],true)
 			picture("%s-after-%02d" % [id,frame_count+1])
@@ -143,6 +174,21 @@ func weapon_proof(id: String) -> void:
 				expect(game.strikes.size()==1 and field.visible_arrow(game.strikes[0]).y<game.strikes[0].p.y-8,"Bolt origin follows the illustrated bow without changing rules coordinates")
 	expect(opponent.hp<opponent.max_hp,"Target receives damage from existing rules")
 	print(id," contact=",impact," recovery=",duration-impact," paired_samples=",frame_count+1," target_hp=",opponent.hp)
+
+func rotated_contact(id: String) -> void:
+	game.clear_battle()
+	var unit = game.make_actor(id,Vector2(290,193))
+	unit.face = Vector2.RIGHT
+	game.team.append(unit)
+	field.sync_figures()
+	game.attack(unit,unit.p+Vector2(-70,70))
+	for tick in unit.attack.impact: game.step_attack(unit)
+	field.sync_figures()
+	var character = rig(unit)
+	var rotated_tool = character.tool
+	var heading = (rotated_tool.to_global(Vector2.RIGHT)-rotated_tool.global_position).normalized()
+	expect(unit.attack.contact and absf(heading.angle_to(unit.attack.dir))<0.001 and absf(character.player.current_animation_position-0.55)<0.0001,
+		"Changing aim quadrant preserves the 0.55 contact pose and matches the new direction")
 
 func bow_release_checks() -> void:
 	var origin = Vector2(290,193)
@@ -176,6 +222,119 @@ func bow_release_checks() -> void:
 		var expected: Vector2 = projectile.p+release_offset.lerp(Vector2(0,-15),projectile.p.distance_to(origin)/90.0)
 		expect(field.visible_arrow(projectile).distance_to(expected)<0.01,"Delayed render retains the release tip: "+scenario)
 		expect(projectile.origin==origin and projectile.dir==Vector2.RIGHT and projectile.p.distance_to(origin+Vector2.RIGHT*330.0*Rules.STEP*step_count)<0.01,"Release visualization preserves the rules trajectory: "+scenario)
+
+func warning_pixels(frame: Image, tip: Vector2i) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	for y in range(tip.y-4,tip.y+5):
+		for x in range(tip.x-1,tip.x+2):
+			var pixel = frame.get_pixel(x,y)
+			if pixel.r>0.87 and pixel.g>0.79 and pixel.b>0.60:
+				points.append(Vector2(x,y))
+	return points
+
+func warning_proof(id: String, reduced: bool) -> void:
+	game.clear_battle()
+	game.targets.clear()
+	game.barrier.clear()
+	field.size = Rules.WORLD
+	field.reduce_motion = reduced
+	var origin = Vector2(200,175)
+	var enemy = game.make_actor(id,origin,true)
+	game.team.append(game.make_actor("liu",Vector2(360,225)))
+	game.foes.append(enemy)
+	game.attack(enemy,origin+Vector2.RIGHT*100)
+	var reach = game.max_range(enemy)
+	if id=="archer":
+		reach = 80.0
+		game.barrier.append(Rect2(280,152,8,46))
+	var impact: int = enemy.attack.impact
+	var samples: Array[Image] = []
+	for age in [0,int(impact*0.65),impact-5,impact-4,impact-1,impact]:
+		enemy.attack.step = age
+		enemy.attack.contact = age==impact
+		field.queue_redraw()
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		samples.append(root.get_texture().get_image())
+	var prefix = "%s %s: " % [id,"reduced" if reduced else "normal"]
+	var inner = Vector2i(origin+Vector2(reach*0.36,1))
+	var moving_edge = Vector2i(origin+Vector2(reach*0.55,1))
+	expect(samples[0].get_pixelv(inner)!=samples[1].get_pixelv(inner),prefix+"wind-up fills the inner part of the warning")
+	expect((samples[0].get_pixelv(moving_edge)==samples[1].get_pixelv(moving_edge))==reduced,prefix+"fill crosses the midpoint only in continuous mode at this tick")
+	for offset in [3,10]:
+		var tip = Vector2i(origin+Vector2(reach-offset,0))
+		var late = warning_pixels(samples[3],tip)
+		expect(warning_pixels(samples[2],tip).is_empty() and not late.is_empty() and warning_pixels(samples[5],tip).is_empty(),
+			prefix+"chevron at offset %d appears at four ticks and clears on contact" % offset)
+		if reduced:
+			expect(late==warning_pixels(samples[4],tip),prefix+"chevron at offset %d keeps its position until contact" % offset)
+	if id=="archer":
+		var beyond = Vector2i(origin+Vector2(reach+15,0))
+		expect(samples[3].get_pixelv(beyond)==samples[5].get_pixelv(beyond),prefix+"the wall clips the warning before the marked pixel")
+
+func rail_pixels(frame: Image, at: Vector2i, tint: int) -> int:
+	var width := 0
+	while at.x+width<frame.get_width() and frame.get_pixel(at.x+width,at.y).to_rgba32()==tint:
+		width += 1
+	return width
+
+func crowded_bars_proof() -> void:
+	game.clear_battle()
+	game.barrier.clear()
+	game.targets.assign([["gate",Vector2(322,125),"관문 점령"]])
+	field.size = Vector2(640,206)
+	field.text_zoom = 1.18
+	var allies = ["liu","fan","han","cao"]
+	var expected: Array[Vector3] = []
+	for i in allies.size():
+		var unit = game.make_actor(allies[i],Vector2(260+i*12,45))
+		var ratios = Vector3(0.28+i*0.17,0.86-i*0.15,0.36+i*0.13)
+		unit.hp = unit.max_hp*ratios.x
+		unit.mp = unit.max_mp*ratios.y
+		unit.fatigue = 100.0*ratios.z
+		game.team.append(unit)
+		expected.append(ratios*37)
+	var enemy = game.make_actor("guard",Vector2(295,100),true)
+	game.foes.append(enemy)
+	game.attack(enemy,Vector2(295,45))
+	game.traces.append({"p":Vector2(305,78),"kind":"damage","value":7})
+	game.traces.append({"p":Vector2(276,72),"kind":"evade","dir":Vector2.RIGHT,"life":0.25})
+	field.set("inspected_uid",game.team[2].uid)
+	field.sync_figures()
+	field.queue_redraw()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var crowded = root.get_texture().get_image()
+	var arena = Rect2i(field.box)
+	var plates: Array[Rect2i] = []
+	var matched: Array[int] = []
+	var label_pixels = {0xe3ad5eff:0,0xeb9a72ff:0,0xe8c998ff:0,0xf2a271ff:0}
+	for y in range(arena.position.y+2,arena.end.y-2):
+		for x in range(arena.position.x+2,arena.end.x-2):
+			var paint = crowded.get_pixel(x,y).to_rgba32()
+			if label_pixels.has(paint) and [crowded.get_pixel(x-2,y),crowded.get_pixel(x+2,y),crowded.get_pixel(x,y-2),crowded.get_pixel(x,y+2)].any(
+					func(pixel): return pixel.to_rgba32()==0x211915ff):
+				label_pixels[paint] += 1
+			if paint!=0xa5cb93ff or crowded.get_pixel(x,y-1).to_rgba32()==paint or crowded.get_pixel(x-1,y).to_rgba32()==paint:
+				continue
+			var plate = Rect2i(x-20,y-2,60,22)
+			expect(arena.encloses(plate) and not plates.any(func(other): return other.intersects(plate)),
+				"The ally's plate fits inside the field and avoids the other plates")
+			plates.append(plate)
+			var top = Vector3(rail_pixels(crowded,Vector2i(x,y),paint),
+				rail_pixels(crowded,Vector2i(x,y+6),0x92c2dfff),rail_pixels(crowded,Vector2i(x,y+12),0xe3ad5eff))
+			var bottom = Vector3(rail_pixels(crowded,Vector2i(x,y+4),paint),
+				rail_pixels(crowded,Vector2i(x,y+10),0x92c2dfff),rail_pixels(crowded,Vector2i(x,y+16),0xe3ad5eff))
+			expect(top==bottom and top.x>0 and top.y>0 and top.z>0,"All three rail fills retain their full height")
+			var owner = expected.find_custom(func(widths): return (top-widths).abs().length()<=2.0)
+			expect(owner>=0 and not matched.has(owner),"The HP, MP and fatigue fills match one ally's values")
+			matched.append(owner)
+	expect(plates.size()==allies.size() and matched.size()==allies.size(),"All four allies have a separate status plate")
+	for tint in label_pixels:
+		expect(label_pixels[tint]>0,"The crowded field retains the chip with text color %08x" % tint)
+	field.text_zoom = 1.0
+	field.reduce_motion = false
+	field.set("inspected_uid",-1)
 
 func verify() -> void:
 	var headless = DisplayServer.get_name()=="headless"
@@ -213,6 +372,12 @@ func verify() -> void:
 	expect(field.overlay.material.light_mode==CanvasItemMaterial.LIGHT_MODE_UNSHADED,"HUD and response layer are not lit")
 	for id in ["liu","fan","han"]: weapon_proof(id)
 	bow_release_checks()
+	for id in ["liu","fan","han"]: rotated_contact(id)
+	if profile_render:
+		for id in ["guard","archer"]:
+			for reduced in [false,true]:
+				await warning_proof(id,reduced)
+		await crowded_bars_proof()
 	game.clear_battle()
 	game.targets.clear()
 	for id in Rules.HEROES:
