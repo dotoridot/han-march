@@ -9,7 +9,7 @@
 
 ## 캠페인의 의존성과 그림
 
-- [Dialogue Manager 4.0.0](https://github.com/nathanhoad/godot_dialogue_manager/tree/2162eff4ce74295390708b5e83c344523dec5ff0), [Godot Gameplay Systems 0.20.5](https://github.com/OctoD/godot-gameplay-systems/tree/d3e20d160ecbec75c30dcc219673416718430f1b)의 사용 소스를 포함합니다. 각각 MIT 고지를 `han-march/licenses/`에 보존했습니다.
+- [Dialogue Manager 4.0.0](https://github.com/nathanhoad/godot_dialogue_manager/tree/2162eff4ce74295390708b5e83c344523dec5ff0), [Godot Gameplay Systems 0.20.5](https://github.com/OctoD/godot-gameplay-systems/tree/d3e20d160ecbec75c30dcc219673416718430f1b)의 사용 소스를 포함합니다. 각각 MIT 고지를 `han-march/licenses/`에 보존했습니다. Gameplay Systems의 고정 소스와 일치한 GUT 시험 파일 두 개는 게임 실행에 쓰이지 않아 최신 트리에서 제외했습니다.
 - [LimboAI v1.7.1](https://github.com/limbonaut/limboai/releases/tag/v1.7.1)은 GDExtension 4.6용 공식 ZIP을 받습니다. 고정 버전, SHA-256과 대상 경로는 `fetch-dependencies.sh`에서 확인할 수 있습니다. MIT 고지는 `han-march/licenses/LimboAI.txt`에 있습니다.
 - [Nightfall](https://github.com/nykadamec/nightfall/tree/c6e36509885cfcbf054cfa1c7a48ab28f83f1a90)의 데이터 구조를 참고했습니다. 고지는 `han-march/licenses/Nightfall.txt`에 있습니다.
 - 전장 도트는 이 프로젝트에서 작성했습니다. `han-march/design/paint_march.py`와 아틀라스를 포함합니다. [LibreSprite 1.3](https://github.com/LibreSprite/LibreSprite/tree/cdb12a323ce5ec4fce3512bc6590a90228f15bb9)은 편집에 사용한 별도 GPL v2 도구입니다.
