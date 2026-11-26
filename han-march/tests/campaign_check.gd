@@ -41,7 +41,7 @@ func expedition(seed_value: int, mode: String, routes: Array) -> Campaign:
 			g.roll()
 			if mode=="fiction" and i==0:
 				expect(g.draft_candidate=="xiang" and not g.hero_keys.has("xiang"),"Fiction seed offers Xiang with lance weighting")
-			expect(g.advance(g.offerings[0].id),"Upgrade opens map")
+			expect(g.advance(g.offerings[0].id,"supply" if g.draft_candidate in g.hero_keys else ""),"Upgrade opens map")
 		elif g.phase=="lost": break
 	return g
 
@@ -232,8 +232,8 @@ func checkpoint_checks() -> void:
 		cfg = ConfigFile.new()
 		expect(cfg.load(path)==OK and restored.restore(cfg.get_value("checkpoint","state",{})),"Checkpoint disk round trip")
 	expect(restored.draft_result==g.draft_result and restored.draft_candidate==g.draft_candidate and restored.supply==g.supply and not restored.roll(),"Committed result, cost and advanced RNG are durable")
-	g.advance(g.offerings[0].id)
-	restored.advance(restored.offerings[0].id)
+	g.advance(g.offerings[0].id,"supply" if g.draft_candidate in g.hero_keys else "")
+	restored.advance(restored.offerings[0].id,"supply" if restored.draft_candidate in restored.hero_keys else "")
 	expect(restored.hero_keys==g.hero_keys and restored.names_upgrades==g.names_upgrades,"Same final recruit and perk after restart")
 	g.choose_route(0)
 	restored.choose_route(0)
@@ -242,6 +242,147 @@ func checkpoint_checks() -> void:
 	for instance in [g,paired,restored]:
 		instance.clear_battle()
 		instance.host.queue_free()
+
+func recruitment_checks() -> void:
+	var g = make()
+	for mode in ["history","fiction"]:
+		g.new_run(245,mode)
+		g.choose_route(0)
+		g.enter_battle()
+		g.finish_battle(true)
+		var expected = [0,0,10,8,0] if mode=="history" else [0,0,8,6,4]
+		expect(g.draft_weights()==expected,mode+" first free weights redistribute nine owned faces")
+		var camp = g.checkpoint()
+		var seen = {}
+		var rng = RandomNumberGenerator.new()
+		for seed_value in range(1,500):
+			rng.seed = seed_value
+			var initial = rng.state
+			var face = rng.randi_range(1,18)
+			if seen.has(face): continue
+			seen[face] = true
+			g.restore(camp)
+			g.draft_rng.state = initial
+			g.roll()
+			var id = "han" if face<=expected[2] else ("cao" if face<=expected[2]+expected[3] else "xiang")
+			var streams = g.checkpoint().streams
+			expect(g.draft_result.begins_with(str(face)+"면") and g.draft_candidate==id,mode+" assigns face %d to %s" % [face,id])
+			expect(g.supply==camp.supply and streams==[camp.streams[0],camp.streams[1],rng.state,camp.streams[3]],"Only the recruitment stream advances")
+			if seen.size()==18: break
+		expect(seen.size()==18,mode+" visits all die faces")
+
+	g.new_run(245,"history")
+	g.choose_route(0)
+	g.enter_battle()
+	g.finish_battle(true)
+	g.hero_keys.append("han")
+	expect(g.draft_weights()==[0,0,0,18,0],"The last eligible history recruit gets all 18 faces")
+	g.hero_keys.append("cao")
+	expect(g.draft_weights()==[4,5,5,4,0] and g.roll() and g.draft_candidate in g.hero_keys,"No eligible recruit falls back to a safe duplicate")
+	g.clear_battle()
+	g.host.queue_free()
+
+func promotion_checks() -> void:
+	var g = make()
+	g.new_run(245,"history")
+	g.choose_route(0)
+	g.enter_battle()
+	g.finish_battle(true)
+	var camp = g.checkpoint()
+	var rng = RandomNumberGenerator.new()
+	for seed_value in range(1,500):
+		rng.seed = seed_value
+		var state = rng.state
+		if rng.randi_range(1,18)<=7 and rng.randi_range(1,18)>10:
+			camp.streams[2] = state
+			break
+	g.restore(camp)
+	var before = g.supply
+	expect(g.change_plan("shield") and g.draft_weights()==[7,4,4,3,0] and g.roll() and g.draft_candidate=="fan","Paid first-camp plan retains its weight and may draw a duplicate")
+	var paid = g.checkpoint()
+	expect(g.supply==before-1 and not g.roll() and g.supply==before-1,"Paid roll debits exactly once")
+	expect(g.redraw_reward() and not g.redraw_reward() and g.draft_candidate=="" and g.draft_plan=="balance","Redraw discards the pending reward and is single use")
+	expect(g.draft_rng.state==paid.streams[2] and g.supply==before-3 and g.roll() and g.draft_candidate=="cao","Replacement uses one further draw and first-camp balance weights")
+	var perk: String = g.offerings[0].id
+	expect(g.advance(perk) and "cao" in g.hero_keys and g.promotion_level("fan")==0,"Only the replacement joins")
+
+	for level in range(3):
+		g.restore(paid)
+		g.promotions["fan"] = level
+		var unchanged = g.checkpoint()
+		expect(not g.advance(perk) and g.checkpoint()==unchanged,"Duplicate requires an explicit decision")
+		expect(g.advance(perk,"promote") and not g.advance(perk,"promote") and g.promotion_level("fan")==level+1 and g.supply==paid.supply,"Promotion grants exactly one rank and no supply")
+		expect(g.make_actor("fan",Vector2.ZERO).promotion==level+1 and g.make_actor("fan",Vector2.ZERO,true).promotion==0,"Promotion is applied to the allied actor")
+	g.restore(paid)
+	g.promotions["fan"] = 3
+	expect(not g.advance(perk,"promote") and g.promotion_level("fan")==3,"Promotion refuses a fourth rank")
+	for stores in [5,8,9]:
+		g.restore(paid)
+		g.supply = stores
+		expect(g.advance(perk,"supply") and g.supply==mini(stores+2,9) and g.promotion_level("fan")==0,"Conversion grants up to two supplies within the cap")
+
+	var old = paid.duplicate(true)
+	old.erase("promotions")
+	old.draft_result += " 중복이면 보급 +1"
+	expect(g.restore(old) and g.promotion_level("fan")==0 and g.draft_candidate=="fan" and g.draft_result==old.draft_result and g.draft_rng.state==old.streams[2] and not g.roll(),"Legacy saved result stays revealed with a zero starting rank")
+	old.erase("rolled")
+	expect(g.restore(old) and not g.roll() and g.draft_candidate=="fan","A saved face and candidate also seal an incomplete checkpoint")
+	old.erase("draft_candidate")
+	expect(g.restore(old) and not g.roll() and g.draft_candidate=="" and g.advance(perk) and g.supply==old.supply,"Incomplete result lets the march proceed without re-rolling or granting a reward")
+	old.erase("draft_result")
+	old["redrawn"] = true
+	old.draft_plan = "balance"
+	expect(g.restore(old) and g.roll() and not g.redraw_reward() and g.supply==old.supply,"Legacy paid redraw can complete after restart without another redraw charge")
+	g.restore(paid)
+	g.promotions["fan"] = 3
+	var promoted = g.checkpoint()
+	expect(g.restore(promoted) and g.promotion_level("fan")==3,"Promotion survives restoration")
+	g.new_run(245,"history")
+	expect(g.promotion_level("fan")==0,"A new run resets promotion ranks")
+	g.clear_battle()
+	g.host.queue_free()
+
+func promotion_effect_checks() -> void:
+	var g = make()
+	g.new_run(245,"fiction")
+	g.choose_route(0)
+	g.enter_battle()
+	g.clear_battle()
+	g.barrier.clear()
+	g.board_mask.fog = false
+	var state = g.combat_rng.state
+	for id in Campaign.DRAFT:
+		var outcomes := []
+		for level in [0,1]:
+			g.combat_rng.state = state
+			g.promotions[id] = level
+			var actor = g.make_actor(id,Vector2(300,200))
+			var target = g.make_actor("guard",Vector2(390 if id=="cao" else 345,200),true)
+			target.hp = 100
+			target.max_hp = 100
+			var patient = g.make_actor("liu",Vector2(345,200))
+			patient.hp = 50
+			g.team = [patient,actor]
+			g.foes = [target]
+			actor.role = "guard"
+			if id=="fan":
+				g.hurt(actor,100)
+				outcomes.append(actor.hp)
+			else:
+				g.attack(actor,patient.p if id=="xiao" else target.p,true)
+				g.contact(actor)
+				match id:
+					"xiao": outcomes.append(patient.hp)
+					"han": outcomes.append(g.strikes[0].power)
+					_: outcomes.append(target.max_hp-target.hp)
+			g.clear_battle()
+		match id:
+			"fan": expect(is_equal_approx(outcomes[1]-outcomes[0],6.0),"Fan takes six percentage points less damage while guarding")
+			"xiao": expect(is_equal_approx(outcomes[1]-outcomes[0],4.0),"Xiao restores four more HP")
+			"han": expect(is_equal_approx(outcomes[1],outcomes[0]*1.12),"Han fires stronger special arrows")
+			"cao": expect(outcomes[0]==0 and outcomes[1]>0,"Cao's special reaches a target outside the base spear range")
+			"xiang": expect(is_equal_approx(outcomes[1],outcomes[0]*1.18),"Xiang's special strike deals more damage")
+	g.host.queue_free()
 
 func tactics_checks() -> void:
 	var g = make()
@@ -316,6 +457,9 @@ func verify() -> void:
 	await departure_checks()
 	await battle_resume_checks()
 	checkpoint_checks()
+	recruitment_checks()
+	promotion_checks()
+	promotion_effect_checks()
 	tactics_checks()
 	diversity_checks()
 	var classic = expedition(12345,"history",[0,0,1,0])
@@ -392,7 +536,7 @@ func verify() -> void:
 	g.roll()
 	expect(not g.redraw_reward(),"Redraw is limited")
 	expect(g.hero_keys.size()==3,"Pending draws never add two recruits")
-	g.advance(g.offerings[0].id)
+	g.advance(g.offerings[0].id,"supply" if g.draft_candidate in g.hero_keys else "")
 	expect(g.hero_keys.size()<=4,"Keeping a draw grants at most one recruit")
 	print("Campaign checks ",checks-failed.size(),"/",checks)
 	for backend in [g,classic,fiction,defeated]:
