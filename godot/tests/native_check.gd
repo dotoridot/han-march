@@ -226,7 +226,29 @@ func test_full_paths() -> void:
 	reset.setup(loss.journal)
 	want(reset.journal.has("lost") and reset.rolled.is_empty() and reset.team.all(func(u): return u.skills.is_empty()),"Loss resets run but archive survives")
 
+func modal_checks() -> void:
+	var app = load("res://main.tscn").instantiate()
+	root.add_child(app)
+	app.set_process(false)
+	app.set_physics_process(false)
+	app.begin()
+	for kind in ["pause","journal"]:
+		app.rebuild_overlay(kind)
+		await process_frame
+		var click = InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.pressed = true
+		click.position = app.sheet.get_global_rect().get_center()
+		app._input(click)
+		want(app.view==kind,"Inside click keeps "+kind+" open")
+		click.position = Vector2.ZERO
+		app._input(click)
+		want(app.view.is_empty(),"Outside click closes "+kind)
+	app.queue_free()
+	await process_frame
+
 func verify() -> void:
+	await modal_checks()
 	test_geometry_holds()
 	test_weapons()
 	test_growth_and_roles()
