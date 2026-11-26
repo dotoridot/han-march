@@ -6,7 +6,11 @@ const Strike = preload("res://strike.gd")
 const WORLD = Vector2(640,374)
 const STEP = 1.0/60.0
 const ATTACK_STEPS = {"sword":42,"axe":53,"bow":58,"spear":55,"aid":52}
-const DODGE_STEPS = 14
+const ENEMY_TIMING = {
+	"guard":[30,24,"sword"],"pursuer":[26,25,"spear"],"archer":[34,25,"bow"],"captain":[33,29,"spear"],"fiction":[33,29,"spear"],
+}
+const ATTACK_POSES = {"sword":[0.0,0.14,0.30,0.52,0.69,0.88],"axe":[0.0,0.20,0.42,0.59,0.78,0.91]}
+const DODGE_STEPS = 22
 const SAVE_VERSION = 2
 const HEROES = {
 	"liu":["유방","검","전위",152,120,55],
@@ -27,7 +31,17 @@ const ODDS = {
 	"shield":[7,4,4,2,1],
 	"lance":[3,3,3,4,5],
 }
-const ABILITIES = {"command":[10,5.0],"shield":[7,4.8],"cover":[8,5.5],"heal":[6,3.4],"pierce":[7,4.0]}
+const ABILITIES = {"brace":[7,7.0],"rally":[12,8.0],"command":[10,5.0],"shield":[7,4.8],"cover":[8,5.5],"heal":[6,3.4],"pierce":[7,4.0]}
+const SKILL_INFO = {
+	"command":["기세 베기","강한 검격"],
+	"brace":["굳건한 자세","0.9초간 받는 피해 55% 감소"],
+	"rally":["숨 고르기","곁의 아군 MP 6 회복, 피로 24 감소"],
+	"shield":["방패 반격","호위 중 가까운 공격을 막고 도끼로 반격"],
+	"heal":["응급 처치","부상한 동료 곁에서 체력 회복"],
+	"cover":["지원 사격","번쾌의 엄호 또는 먼 시위 강화 시 강한 화살"],
+	"pierce":["돌파 찌르기","약낭 돌파 또는 예봉 강화 시 강한 찌르기"],
+}
+var player_skill = "command"
 var mode = "history"
 var seed_value: int
 var field_rng = RandomNumberGenerator.new()
@@ -56,6 +70,8 @@ var foes: Array = []
 var reserves: Array = []
 var strikes: Array = []
 var traces: Array = []
+var sound_cue := ""
+var sound_priority := 0
 var events: Array[String] = []
 var record: Array = []
 var completed: Array = []
@@ -123,9 +139,22 @@ func mount(owner: Node) -> void:
 	board = Blackboard.new()
 	bt = tree.instantiate(host,board,host,host)
 	for weapon in ATTACK_STEPS:
-		var library = AnimationLibrary.new()
-		library.add_animation("attack",Strike.clip(ATTACK_STEPS[weapon]))
-		clips[weapon] = library
+		var profile: Array = ATTACK_POSES.get(weapon,Strike.BOUNDARIES)
+		var duration: int = ATTACK_STEPS[weapon]
+		var impact = ceili(duration*profile[3])
+		build_attack_clip(weapon,duration,impact,profile,weapon)
+	for id in ENEMY_TIMING:
+		for chapter_index in [0,1]:
+			var impact: int = ENEMY_TIMING[id][0]+(4 if chapter_index==0 else 0)
+			build_attack_clip(id+str(chapter_index),impact+ENEMY_TIMING[id][1],impact,Strike.BOUNDARIES,ENEMY_TIMING[id][2])
+
+func build_attack_clip(key: String, duration: int, impact: int, profile: Array, weapon: String) -> void:
+	var ticks = [0,ceili(impact*profile[1]/profile[3]),ceili(impact*profile[2]/profile[3]),impact,
+		impact+ceili((duration-impact)*(profile[4]-profile[3])/(1.0-profile[3])),
+		impact+ceili((duration-impact)*(profile[5]-profile[3])/(1.0-profile[3]))]
+	var library = AnimationLibrary.new()
+	library.add_animation("attack",Strike.clip(duration,ticks,weapon))
+	clips[key] = [library,duration,impact,ticks]
 
 func new_run(number: int, chosen: String) -> void:
 	clear_battle()
@@ -141,6 +170,7 @@ func new_run(number: int, chosen: String) -> void:
 	completed.clear()
 	rescue_order.clear()
 	tactic = ""
+	player_skill = "command"
 	report = ""
 	phase = "map"
 	remember("opening")
@@ -191,7 +221,7 @@ func make_actor(id: String, pos: Vector2, enemy := false) -> Dictionary:
 	if id in ["xiang","captain","fiction"]:
 		weapon = "spear"
 	uid += 1
-	return {"uid":uid,"id":id,"p":pos,"hp":hp,"max_hp":hp,"mp":mp,"max_mp":mp,"fatigue":0.0,"face":Vector2.UP,"move":false,"step":0.0,"hit":0.0,"side":enemy,"weapon":weapon,"attack":{},"cool":{},"decision":0.0,"role":"follow","perks":perks}
+	return {"uid":uid,"id":id,"p":pos,"hp":hp,"max_hp":hp,"mp":mp,"max_mp":mp,"fatigue":0.0,"face":Vector2.UP,"move":false,"step":0.0,"hit":0.0,"side":enemy,"weapon":weapon,"attack":{},"cool":{},"brace_time":0.0,"recoil":Vector2.ZERO,"decision":0.0,"role":"follow","perks":perks}
 
 func clear_battle() -> void:
 	for u in team+foes:
@@ -201,6 +231,8 @@ func clear_battle() -> void:
 	foes.clear()
 	strikes.clear()
 	traces.clear()
+	sound_cue = ""
+	sound_priority = 0
 	reserves.clear()
 	events.clear()
 
@@ -303,6 +335,36 @@ func use_skill(user: Dictionary, id: String) -> bool:
 	ability.try_activate(request)
 	return true
 
+func player_skills() -> Array[String]:
+	var skills: Array[String] = ["command"]
+	var perks = names_upgrades.get("liu",[])
+	if "shield" in perks: skills.append("brace")
+	if "reserve" in perks: skills.append("rally")
+	return skills
+
+func cycle_skill() -> void:
+	var options = player_skills()
+	player_skill = options[posmod(options.find(player_skill)+1,options.size())]
+
+func activate_player_skill(player: Dictionary, aim: Vector2) -> bool:
+	if player_skill not in player_skills() or not player.attack.is_empty() or not use_skill(player,player_skill):
+		return false
+	match player_skill:
+		"brace":
+			player.brace_time = 0.9
+			traces.append({"kind":"guard","p":player.p,"life":0.9,"dir":player.face})
+			events.append("굳건한 자세")
+		"rally":
+			for ally in alive(team):
+				if ally!=player and player.p.distance_to(ally.p)<=90:
+					ally.fatigue = maxf(0,ally.fatigue-24)
+					ally.mp = minf(ally.max_mp,ally.mp+6)
+					traces.append({"kind":"rally","p":ally.p,"life":0.45,"dir":Vector2.UP})
+			events.append("숨 고르기")
+		_:
+			attack(player,aim,true)
+	return true
+
 func refresh_tactic() -> void:
 	tactic = ""
 	if "han" in hero_keys and "fan" in hero_keys:
@@ -391,10 +453,11 @@ func attack(u: Dictionary, target: Vector2, special := false) -> bool:
 	node.root_node = NodePath(".")
 	node.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	node.callback_mode_method = AnimationMixer.ANIMATION_CALLBACK_MODE_METHOD_IMMEDIATE
-	node.add_animation_library("",clips[u.weapon])
+	var clip: Array = clips[u.id+str(mini(chapter,1)) if u.side else u.weapon]
+	node.add_animation_library("",clip[0])
 	host.add_child(node)
 	attack_number += 1
-	u.attack = {"node":node,"id":attack_number,"step":0,"frame":0,"dir":direction,"special":special,"target":target,"contact":false,"hit":{}}
+	u.attack = {"node":node,"id":attack_number,"step":0,"frame":0,"duration":clip[1],"impact":clip[2],"poses":clip[3],"dir":direction,"special":special,"target":target,"contact":false,"hit":{}}
 	node.play("attack")
 	node.advance(0)
 	u.fatigue = minf(100,u.fatigue+(14 if u.weapon=="spear" else 10))
@@ -410,13 +473,13 @@ func step_attack(u: Dictionary) -> void:
 	if state.is_empty():
 		return
 	state.step += 1
-	var end: int = ATTACK_STEPS[u.weapon]
+	var end: int = state.duration
 	if state.step>=end:
 		cancel(u)
 		return
-	state.frame = Strike.frame_at(end,state.step)
+	state.frame = Strike.frame_at(state.poses,state.step)
 	state.node.seek((state.step+0.01)*STEP,true)
-	if state.step==Strike.phase_tick(end,3):
+	if state.step==state.impact:
 		contact(u)
 
 func contact(u: Dictionary) -> void:
@@ -441,33 +504,71 @@ func contact(u: Dictionary) -> void:
 		power *= 1.25
 	if u.fatigue > 76:
 		power *= 0.74
-	traces.append({"p":u.p,"life":0.18,"kind":u.weapon,"dir":direction,"reach":distance})
+	traces.append({"p":u.p,"life":0.18,"kind":u.weapon,"dir":direction,"reach":distance,
+		"attack_id":u.attack.id,"tick":step_number,"special":u.attack.special})
 	if u.weapon == "bow":
 		strikes.append({"origin":u.p,"p":u.p,"dir":direction,"left":distance,"actor":u,"power":power,"attack_id":u.attack.id})
+		queue_cue("loose",1)
 		return
+	var touched := false
 	for target in targets_to_hit:
 		var gap: Vector2 = target.p-u.p
-		if gap.length() <= distance and (gap.length()<4 or gap.normalized().dot(direction)>=cos(sweep_angle(u))) and line_obstacle(u.p,target.p)==INF and not u.attack.hit.has(target.uid):
+		if gap.length() <= distance and (gap.length()<4 or gap.normalized().dot(direction)>=cos(sweep_angle(u))) and not u.attack.hit.has(target.uid):
+			var barrier_at = line_obstacle(u.p,target.p)
+			if barrier_at<INF:
+				if not touched:
+					contact_feedback("block",u.weapon,u.p.lerp(target.p,sqrt(barrier_at)),direction,u.attack.id)
+				touched = true
+				continue
 			u.attack.hit[target.uid] = true
-			hurt(target,power,u)
+			touched = true
+			hurt(target,power,u,u.attack.id,direction)
+	if not touched:
+		var wall = line_obstacle(u.p,u.p+direction*distance)
+		var point: Vector2 = u.p+direction*distance*(sqrt(wall) if wall<INF else 0.7)
+		contact_feedback("block" if wall<INF else "miss",u.weapon,point,direction,u.attack.id)
 
-func hurt(u: Dictionary, power: float, source: Dictionary = {}) -> bool:
+func queue_cue(which: String, priority: int) -> void:
+	if priority>sound_priority:
+		sound_priority = priority
+		sound_cue = which
+
+func contact_feedback(outcome: String, weapon: String, at: Vector2, direction: Vector2, attack_id: int) -> void:
+	traces.append({"kind":outcome,"weapon":weapon,"p":at,"dir":direction,"attack_id":attack_id,"tick":step_number,
+		"life":0.19 if outcome=="miss" else 0.30})
+	match outcome:
+		"block": queue_cue("block",5)
+		"impact": queue_cue(weapon+"_impact",4)
+		"evade": queue_cue("dodge",3)
+		"miss": queue_cue("whiff",1)
+
+func hurt(u: Dictionary, power: float, source: Dictionary = {}, attack_id := -1, direction := Vector2.ZERO) -> bool:
+	var weapon: String = source.get("weapon","sword")
 	if u.hp<=0 or (u.id=="liu" and dodge_left>0):
 		if u.id=="liu" and dodge_left>0:
 			events.append("회피 성공")
+			contact_feedback("evade",weapon,u.p,direction,attack_id)
 		return false
 	if chapter==3 and u.id in ["captain","fiction"] and gates<2:
+		contact_feedback("block",weapon,u.p,direction,attack_id)
 		return false
 	if has(u,"shield"):
 		power *= 0.70
+	if u.brace_time>0:
+		power *= 0.45
 	if u.id=="fan" and u.role=="guard":
 		power *= 0.58
 		if u.cool.get("shield",0.0)<=0.0 and not source.is_empty() and u.p.distance_to(source.p)<54 and u.attack.is_empty() and use_skill(u,"shield"):
 			attack(u,source.p,true)
 			events.append("번쾌 방패 반격")
-	u.hp = maxf(0,u.hp-power)
-	u.hit = 0.17
-	traces.append({"p":u.p,"life":0.55,"kind":"damage","value":roundi(power),"dir":Vector2.UP})
+	var guarded = u.brace_time>0 or (u.id=="fan" and u.role=="guard")
+	var impulse: Vector2 = direction if not direction.is_zero_approx() else (source.p.direction_to(u.p) if not source.is_empty() else -u.face)
+	var inflicted = minf(u.hp,power)
+	u.hp -= inflicted
+	u.hit = 0.12 if guarded else 0.17
+	u.recoil = impulse*(1.7 if guarded else (4.6 if weapon=="axe" else 3.1))
+	contact_feedback("block" if guarded else "impact",weapon,u.p,impulse,attack_id)
+	traces.append({"p":u.p,"life":0.55,"kind":"damage","value":roundi(inflicted),"dir":Vector2.UP,"tick":step_number})
 	if u.hp==0:
 		cancel(u)
 		if u.side:
@@ -492,7 +593,11 @@ func move_projectiles(dt: float) -> void:
 				hit_at = when
 				victim = u
 		if not victim.is_empty():
-			hurt(victim,arrow.power,arrow.actor)
+			hurt(victim,arrow.power,arrow.actor,arrow.attack_id,arrow.dir)
+		elif blocked_at<INF:
+			contact_feedback("block","bow",arrow.p.lerp(after,sqrt(blocked_at)),arrow.dir,arrow.attack_id)
+		elif arrow.left<=step:
+			contact_feedback("miss","bow",after,arrow.dir,arrow.attack_id)
 		if hit_at<INF:
 			arrow.left = 0
 		arrow.left -= step
@@ -556,7 +661,7 @@ func run_ally(u: Dictionary, player: Dictionary, dt: float) -> void:
 	var needy = nearest(u.p,alive(team).filter(func(a): return a!=u and a.max_hp-a.hp>16),135)
 	var vulnerable = u.hp<u.max_hp*0.28 or u.fatigue>83
 	var guard_lead = nearest(player.p,foes,105)
-	var use_cover = tactic=="shield_cover" and u.id=="han" and not foe.is_empty()
+	var use_cover = u.id=="han" and (tactic=="shield_cover" or has(u,"arch")) and not foe.is_empty()
 	if u.decision<=0:
 		board.set_var("options",{"rest":vulnerable,"heal":u.id=="xiao" and not needy.is_empty(),"guard":u.id=="fan" and not guard_lead.is_empty(),"cover":use_cover,"fight":u.id!="xiao" and not foe.is_empty(),"follow":true})
 		bt.update(dt)
@@ -588,9 +693,10 @@ func run_ally(u: Dictionary, player: Dictionary, dt: float) -> void:
 				toward(u,foe.p,speed,max_range(u)-12)
 			if u.p.distance_to(foe.p)<max_range(u) and u.attack.is_empty():
 				var use = "cover" if u.weapon=="bow" else "pierce"
-				var boosted = (u.role=="cover" or (tactic=="medicine_advance" and u.weapon=="spear")) and use_skill(u,use)
+				var boosted = (u.role=="cover" or (u.weapon=="spear" and (tactic=="medicine_advance" or has(u,"edge")))) and use_skill(u,use)
 				if boosted:
-					events.append(tactic_name())
+					var combined = (use=="cover" and tactic=="shield_cover") or (use=="pierce" and tactic=="medicine_advance")
+					events.append(tactic_name() if combined else SKILL_INFO[use][0])
 				attack(u,foe.p,boosted)
 		_:
 			toward(u,behind+Vector2(24*(team.find(u)-1),15),speed,19)
@@ -607,6 +713,10 @@ func run_enemy(u: Dictionary, dt: float) -> void:
 		return
 	toward(u,target,amount,max_range(u)-6)
 	if u.p.distance_to(target)<max_range(u) and target!=wagon and line_obstacle(u.p,target)==INF:
+		# Local melee attacks enter the warning phase a few ticks apart.
+		if u.weapon!="bow" and foes.any(func(other):
+			return other!=u and other.hp>0 and other.weapon!="bow" and not other.attack.is_empty() and other.attack.step<10 and other.attack.target.distance_to(target)<52.0):
+			return
 		attack(u,target)
 
 func tick(elapsed: float, movement: Vector2, aim: Vector2, hit: bool, dodge: bool, use: bool, skill: bool) -> void:
@@ -622,6 +732,8 @@ func tick(elapsed: float, movement: Vector2, aim: Vector2, hit: bool, dodge: boo
 func step(movement: Vector2, aim: Vector2, hit: bool, dodge: bool, use: bool, skill: bool) -> void:
 	var dt = STEP
 	step_number += 1
+	sound_cue = ""
+	sound_priority = 0
 	time = step_number*STEP
 	combat_started = true
 	var player = team[0]
@@ -630,6 +742,7 @@ func step(movement: Vector2, aim: Vector2, hit: bool, dodge: bool, use: bool, sk
 	for u in alive(team+foes):
 		u.move = false
 		u.hit = maxf(0,u.hit-dt)
+		u.brace_time = maxf(0,u.brace_time-dt)
 		u.decision -= dt
 		u.fatigue = maxf(0,u.fatigue-dt*(20 if has(u,"patience") else 11))
 		u.mp = minf(u.max_mp,u.mp+dt*(3.2 if has(u,"reserve") else 2.0))
@@ -638,10 +751,10 @@ func step(movement: Vector2, aim: Vector2, hit: bool, dodge: bool, use: bool, sk
 	if dodge and dodge_recharge<=0:
 		cancel(player)
 		dodge_ticks = DODGE_STEPS
-		dodge_recharge = 55 if has(player,"wind") else 90
+		dodge_recharge = 50 if has(player,"wind") else 74
 		dodge_dir = movement if not movement.is_zero_approx() else player.face
 	if dodge_left>0:
-		walk(player,dodge_dir,300.0*dt)
+		walk(player,dodge_dir,(325.0 if dodge_ticks>DODGE_STEPS-10 else 92.0)*dt)
 	elif not movement.is_zero_approx():
 		var slow = 0.73 if board_mask.mud and player.p.y>195 else 1.0
 		walk(player,movement,120.0*dt*slow)
@@ -653,9 +766,8 @@ func step(movement: Vector2, aim: Vector2, hit: bool, dodge: bool, use: bool, sk
 			remember("dodge_lesson")
 		return
 	if dodge_left<=0 and not use:
-		if skill and player.attack.is_empty() and use_skill(player,"command"):
-			attack(player,aim,true)
-		elif hit:
+		var used_skill = skill and activate_player_skill(player,aim)
+		if hit and not used_skill:
 			attack(player,aim)
 	for u in alive(team.slice(1)):
 		run_ally(u,player,dt)
@@ -799,7 +911,7 @@ func checkpoint() -> Dictionary:
 		"streams":[field_rng.state,reward_rng.state,draft_rng.state,combat_rng.state],
 		"combat_start":combat_start_state,"rescue_order":rescue_order.duplicate(),
 		"reward_nonce":reward_nonce,"draft_plan":draft_plan,"rolled":draft_done,"redrawn":rerolled,
-		"draft_candidate":draft_candidate,"draft_result":draft_result,"recipient":offered_to,"result":last_result}
+		"draft_candidate":draft_candidate,"draft_result":draft_result,"recipient":offered_to,"result":last_result,"player_skill":player_skill}
 
 func restore(data: Dictionary) -> bool:
 	if data.get("version",0)!=SAVE_VERSION or not data.get("phase","") in ["title","map","travel","camp","lost","ending"]:
@@ -818,6 +930,8 @@ func restore(data: Dictionary) -> bool:
 	board_mask = {"fog":field_rule=="안개","mud":field_rule=="진흙","ridge":field_rule=="고지"}
 	hero_keys = data.heroes
 	names_upgrades = data.perks
+	player_skill = data.get("player_skill","command")
+	if player_skill not in player_skills(): player_skill = "command"
 	completed = data.completed
 	rescue_order.assign(data.get("rescue_order",[]))
 	reward_nonce = data.reward_nonce

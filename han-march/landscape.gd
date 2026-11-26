@@ -179,38 +179,48 @@ func battlefield() -> void:
 		draw_line(origin-Vector2(7,25),origin,Color("f4b372"),2)
 		draw_line(origin+Vector2(7,-25),origin,Color("f4b372"),2)
 	for e in game.alive(game.foes):
-		if not e.attack.is_empty() and e.attack.frame<3:
+		if not e.attack.is_empty() and not e.attack.contact:
 			var dir: Vector2 = e.attack.dir
 			var reach = game.max_range(e)
+			var progress = float(e.attack.step)/e.attack.impact
+			var warning = Color("ffca81") if progress>=0.72 else Color("de754b")
+			for mark in 3:
+				var offset = Vector2((mark-1)*5,8)
+				draw_line(e.p+offset,e.p+offset+Vector2(0,4),warning if progress>=mark/3.0 else Color("563021"),2)
 			if e.weapon=="bow":
 				var edge: Vector2 = dir.orthogonal()*13
 				var cutoff: float = game.line_obstacle(e.p,e.p+dir*reach)
 				if cutoff<INF: reach *= sqrt(cutoff)
 				draw_colored_polygon(PackedVector2Array([e.p-edge,e.p+edge,e.p+dir*reach+edge,e.p+dir*reach-edge]),Color("a84a3077"))
-				draw_line(e.p,e.p+dir*reach,Color("de754b"),1)
+				draw_line(e.p,e.p+dir*reach,warning,2)
 			else:
 				var points = PackedVector2Array([e.p])
 				var angle: float = game.sweep_angle(e)
 				for step in 17:
 					points.append(e.p+dir.rotated(lerpf(-angle,angle,step/16.0))*reach)
 				draw_colored_polygon(points,Color("b6533788"))
-				draw_arc(e.p,reach,dir.angle()-angle,dir.angle()+angle,16,Color("e48a60"),2)
+				draw_arc(e.p,reach,dir.angle()-angle,dir.angle()+angle,16,warning,2)
 	var bodies = game.team+game.alive(game.foes)
 	bodies.sort_custom(func(a,b): return a.uid<b.uid if is_equal_approx(a.p.y,b.p.y) else a.p.y<b.p.y)
 	for u in bodies:
 		portrait(u)
 	for a in game.strikes:
 		draw_line(a.p-a.dir*12,a.p,Color("edbb66"),2)
-	for flash in game.traces:
+	for flash in game.traces.slice(maxi(0,game.traces.size()-34)):
 		var p: Vector2 = flash.p
-		if flash.kind in ["sword","axe","spear"]:
-			var direction: Vector2 = flash.dir
-			if flash.kind=="spear":
-				draw_line(p+direction*14,p+direction*flash.reach,Color("e9bc73"),3)
-			else:
-				draw_arc(p,flash.reach*0.8,direction.angle()-0.68,direction.angle()+0.63,13,Color("daad67"),2)
-		elif flash.kind=="heal":
-			draw_arc(p,22,0,TAU,22,Color("8fb3a3"),2)
+		match str(flash.kind):
+			"sword","axe","spear","bow":
+				draw_weapon_contact(flash)
+			"impact","block","miss","evade":
+				draw_contact_mark(flash)
+			"guard":
+				draw_arc(game.team[0].p,19,0,TAU,22,Color("e4aa62"),2)
+			"heal":
+				draw_arc(p,22,0,TAU,22,Color("8fb3a3"),2)
+			"rally":
+				for side in [-1,1]:
+					var center = p+Vector2(side*15,0)
+					draw_polyline(PackedVector2Array([center+Vector2(-4,3),center+Vector2(0,-2),center+Vector2(4,3)]),Color("d1b069"),2)
 	if game.dodge_left>0:
 		var player = game.team[0]
 		var behind: Vector2 = -game.dodge_dir
@@ -221,6 +231,59 @@ func battlefield() -> void:
 		draw_line(pos-Vector2(0,6),pos+Vector2(0,6),GOLD)
 	if game.board_mask.fog:
 		slab(Vector2.ZERO,Vector2(640,29),"8a968433")
+
+func draw_weapon_contact(trace: Dictionary) -> void:
+	var p: Vector2 = trace.p
+	var direction: Vector2 = trace.dir
+	var angle = direction.angle()
+	var weight = clampf(trace.life/0.18,0.0,1.0)
+	var special: bool = trace.special
+	var glow = Color("edbd6b") if special else Color("d7bf96")
+	var alpha = weight*0.80 if not reduce_motion else 0.72
+	match str(trace.kind):
+		"bow":
+			draw_line(p+direction*6,p+direction*18,Color(glow,alpha),1)
+		"spear":
+			draw_line(p+direction*12,p+direction*trace.reach,Color(glow,alpha),2)
+			draw_line(p+direction*23,p+direction*trace.reach,Color("fff0bc",alpha*0.67),1)
+		_:
+			var heavy = trace.kind=="axe"
+			var angle_size = 0.90 if heavy else 0.68
+			var radius: float = trace.reach*(0.69 if heavy else 0.84)
+			for segment in 8:
+				var portion = segment/8.0
+				var start_angle = angle+lerpf(-angle_size,angle_size,portion)
+				var to = angle+lerpf(-angle_size,angle_size,(segment+1)/8.0)
+				draw_arc(p,radius,start_angle,to,4,Color(glow,alpha*(0.32+portion*0.68)),1.0+portion*(3.4 if heavy else 2.0))
+			if special:
+				draw_arc(p,radius+4,angle-0.25,angle+angle_size,12,Color("e7a354",alpha),1)
+
+func draw_contact_mark(trace: Dictionary) -> void:
+	var at: Vector2 = trace.p
+	var direction: Vector2 = trace.dir if not trace.dir.is_zero_approx() else Vector2.UP
+	var side = direction.orthogonal()
+	var age = clampf(1.0-trace.life/0.30,0,1)
+	var strength = 1.0-age*0.54
+	match str(trace.kind):
+		"block":
+			var steel = Color(Color("eac384"),strength)
+			for offset in [-3,3]:
+				var p = at+direction*offset
+				draw_line(p-side*6-direction*2,p+side*6+direction*2,steel,2)
+		"miss":
+			draw_line(at-direction*7,at-direction*3,Color("aa9369"),1)
+			draw_line(at+direction*2,at+direction*6,Color("aa9369"),1)
+		"evade":
+			draw_arc(at,13,0.0,TAU,22,Color(Color("a6c1b0"),strength),1)
+		"impact":
+			var tint = Color("e1a95e") if trace.weapon=="axe" else Color("dcbb91")
+			var count = 4 if trace.weapon=="axe" else 3
+			for i in count:
+				var ray = direction.rotated((i-(count-1)*0.5)*0.65)
+				var span = (6.0+7.0*age) if not reduce_motion else 7.0
+				draw_line(at+ray*3,at+ray*span,Color(tint,strength),2 if trace.weapon=="axe" else 1)
+			if not reduce_motion:
+				draw_line(at-Vector2(5,2)+side*age*7,at+Vector2(4,3)+side*age*7,Color(Color("987552"),1.0-age),2)
 
 func marker_floor(p: Vector2, tint: String) -> void:
 	draw_arc(p,13,0,TAU,18,Color(tint),1)
@@ -242,8 +305,17 @@ func portrait(u: Dictionary) -> void:
 	var heading: Vector2 = u.face if u.attack.is_empty() else u.attack.dir
 	var direction = posmod(roundi((heading.angle()-PI/2)/(PI/4)),8)
 	var pose = 0 if not u.move or reduce_motion else (1+int(u.step/5.0)%2)
-	if u.hit>0: pose = 9
-	if not u.attack.is_empty(): pose = 3+u.attack.node.painted_pose
+	var visual_shift := Vector2.ZERO
+	if not u.attack.is_empty():
+		pose = 3+u.attack.node.painted_pose
+		if not reduce_motion:
+			var transfer: Vector2 = u.attack.node.visual_transfer
+			var emphasis = 1.45 if u.attack.special else 1.0
+			visual_shift = (heading*transfer.x+Vector2(0,transfer.y))*emphasis
+	if u.hit>0.08 and pose!=6:
+		pose = 9
+	if not reduce_motion and u.hit>0.0:
+		visual_shift += u.recoil*clampf(u.hit/0.17,0,1)
 	var number: int = actor*80+direction*10+pose
 	var source = Vector2(number%16,number/16)*TILE
 	source.y = floorf(float(number)/16)*TILE.y
@@ -252,7 +324,7 @@ func portrait(u: Dictionary) -> void:
 	if u.id=="fiction": tint = Color("aa9181")
 	if u.id=="liu": marker_floor(p,"ece0a2")
 	if u.id in ["captain","fiction"] and game.gates<2: marker_floor(p,"d18d51")
-	draw_texture_rect_region(SPRITES,Rect2(p-Vector2(44,54),TILE),Rect2(source,TILE),tint)
+	draw_texture_rect_region(SPRITES,Rect2(p+visual_shift.round()-Vector2(44,54),TILE),Rect2(source,TILE),tint)
 
 func label_chip(raw: String, p: Vector2, tint: Color, occupied: Array[Rect2], font_size: int) -> void:
 	var dims = chip_font.get_string_size(raw,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size)
@@ -300,6 +372,11 @@ func draw_chips() -> void:
 		if trace.kind=="damage" and damage_labels<6:
 			damage_labels += 1
 			label_chip("−%d" % trace.value,to_screen(trace.p)+Vector2(0,-36),Color("eb9a72"),used,font_size)
+	var response_label := 0
+	for trace in game.traces.slice(maxi(0,game.traces.size()-12)):
+		if trace.kind in ["block","evade"] and response_label<3:
+			response_label += 1
+			label_chip("막힘" if trace.kind=="block" else "회피",to_screen(trace.p)+Vector2(0,-17),Color("e8c998"),used,font_size)
 	if game.chapter==2:
 		label_chip("수레 HP %d" % roundi(game.wagon_hp),to_screen(game.wagon)+Vector2(0,25),GOLD,used,font_size)
 	if game.chapter==3 and game.gates<2:
@@ -307,7 +384,7 @@ func draw_chips() -> void:
 
 func _draw() -> void:
 	var reading = Time.get_ticks_usec()
-	if game==null or size.x<10 or size.y<10:
+	if game==null or size.x<10 or size.y<10 or (display=="battle" and game.team.is_empty()):
 		return
 	var scale_factor = minf(size.x/MAP.x,size.y/MAP.y)
 	box = Rect2(Vector2.ZERO,MAP*scale_factor)

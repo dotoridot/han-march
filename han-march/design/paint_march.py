@@ -45,6 +45,15 @@ def paint(actor, direction, pose):
     tall = 4 if xiang else (2 if xiao else 0)
     lean = {"wind":-3,"brace":-4,"release":1,"hit":6,"follow":5,"recover":2,"hurt":-3}.get(pose,0)
     step = {"walk_a":2,"walk_b":-2,"brace":-2,"release":2,"hit":4,"follow":3,"recover":1}.get(pose,0)
+    if fan and pose in ("wind", "brace", "release", "hit", "recover"):
+        lean = {"wind": -2, "brace": -1, "release": 0, "hit": 3, "recover": -1}[pose]
+        step = {"wind": -3, "brace": -4, "release": -3, "hit": 2, "recover": -2}[pose]
+        tall -= 1 if pose in ("brace", "release") else 0
+    if bow and pose in ("wind", "brace", "release", "hit", "follow", "recover"):
+        lean = {"wind": -1, "brace": -2, "release": -2, "hit": 1,
+                "follow": 1, "recover": 0}[pose]
+        step = {"wind": -2, "brace": -2, "release": -2, "hit": -1,
+                "follow": -1, "recover": 0}[pose]
     if pose == "hurt":
         tall -= 2
     cx, cy = FOOT
@@ -66,6 +75,9 @@ def paint(actor, direction, pose):
 
     def gear():
         angle = {"wind":-0.80,"brace":-1.18,"release":-0.49,"hit":0.08,"follow":0.74,"recover":0.92}.get(pose,-0.32)
+        if fan:
+            angle = {"wind": -1.11, "brace": -1.82, "release": -1.34,
+                     "hit": 0.12, "follow": 0.94, "recover": 0.41}.get(pose, -0.40)
         if bow or xiang:
             angle *= 0.24
         wx = dx * math.cos(angle) - dy * math.sin(angle)
@@ -86,10 +98,16 @@ def paint(actor, direction, pose):
             tips = [point(7,-11),point(11,-7),point(13),point(11,7),point(7,11)]
             line(tips, INK, 4)
             line(tips, "#b88b48", 2)
-            middle = point({"wind":-3,"brace":-9,"release":-4,"hit":5}.get(pose,4))
+            middle = point({"wind":-3,"brace":-9,"release":-11,"hit":7,
+                            "follow":6,"recover":5}.get(pose,4))
             line([tips[0],middle,tips[-1]], "#c5b38b")
+            if pose in ("brace", "release"):
+                line([point(-5,-4),point(-10,-4),middle],INK,4)
+                line([point(-5,-4),point(-10,-4),middle],LIT,2)
             if pose in ("wind","brace","release","hit"):
-                line([middle,point(26 if pose == "hit" else 18)],GLINT)
+                line([middle,point(23 if pose=="hit" else 17)],GLINT)
+            elif pose=="follow":
+                line([point(-3,-2),point(-9,-6)],LIT,2)
         elif fan:
             line([point(-5),point(17)],INK,4)
             line([point(-4),point(16)],"#bb8b50",2)
@@ -161,6 +179,9 @@ def paint(actor, direction, pose):
     if fan:
         sx = (-2 if pose in ("brace","release") else 0) + round(-side[0]*9) or (-7 if dx > 0 else 7)
         sy = round(-side[1]*3)
+        if pose in ("brace", "release"):
+            sx += round(dx*5)
+            sy += 3 + round(dy*3)
         poly([(sx-5,-21+sy),(sx+4,-21+sy),(sx+7,-17+sy),
               (sx+5,-8+sy),(sx,-5+sy),(sx-6,-10+sy),
               (sx-7,-16+sy)],"#593d25",INK)

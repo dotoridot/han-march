@@ -69,10 +69,10 @@ func fixed_run(batch: float, repeats: int, dodge_step: int, pause: bool = false)
 	return result
 
 func timing_checks() -> void:
-	var base = fixed_run(1.0/60,36,20)
-	var half = fixed_run(1.0/30,18,20)
-	var slow = fixed_run(1.0/15,9,20,true)
-	var missed = fixed_run(1.0/15,9,24)
+	var base = fixed_run(1.0/60,44,32)
+	var half = fixed_run(1.0/30,22,32)
+	var slow = fixed_run(1.0/15,11,32,true)
+	var missed = fixed_run(1.0/15,11,36)
 	expect(base==half and half==slow,"60/30/15 render-equivalent batches preserve steps and timely dodge")
 	expect(base[1]==base[2] and base[4]==1 and missed[1]<missed[2],"One blocked contact and positive late-dodge damage")
 	print("Attack replay 60/30/15 Hz ",base," ",half," ",slow," late ",missed)
@@ -99,7 +99,7 @@ func timing_checks() -> void:
 	g.team.append(g.make_actor("liu",Vector2(247,180)))
 	g.foes.append(bow)
 	g.attack(bow,g.team[0].p)
-	for _i in 31: g.step_attack(bow)
+	for _i in bow.attack.impact: g.step_attack(bow)
 	expect(g.strikes.size()==1,"Bow contact starts a real projectile")
 	for _i in 14: g.move_projectiles(Campaign.STEP)
 	expect(g.team[0].hp==g.team[0].max_hp and g.strikes.is_empty(),"Wall stops arrow before player")
@@ -349,7 +349,7 @@ func verify() -> void:
 	var player = g.team[0]
 	g.tick(0.02,Vector2.RIGHT,player.p+Vector2.RIGHT*40,false,true,false,false)
 	expect(g.dodge_left>0 and g.hurt(player,20)==false and player.hp==player.max_hp,"Timely dodge avoids hit and moves")
-	for i in 20: g.tick(0.02,Vector2.ZERO,player.p+Vector2.LEFT*40,false,false,false,false)
+	for i in 24: g.tick(0.02,Vector2.ZERO,player.p+Vector2.LEFT*40,false,false,false,false)
 	expect(g.hurt(player,20) and player.hp<player.max_hp and g.dodge_cd>0,"Late hit hurts during dodge cooldown")
 	var stable = g.battle_seed
 	var first = g.field_rule
