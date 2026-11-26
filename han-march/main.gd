@@ -2,6 +2,8 @@ extends Control
 
 const Campaign = preload("res://campaign.gd")
 const Landscape = preload("res://landscape.gd")
+const MountedMap = preload("res://mounted_map.gd")
+const FeatureModel = preload("res://feature_model.gd")
 const FONT = preload("res://assets/NotoSansKR.ttf")
 const PAPER = Color("f4e6c8")
 const SUBTLE = Color("c6b598")
@@ -15,6 +17,16 @@ var game = Campaign.new()
 var body_font: FontVariation
 var title_font: FontVariation
 var landscape
+var mounted_map: MountedMap
+var seal_view: FeatureModel
+var dice_view: FeatureModel
+var map_prompt: Label
+var map_prompt_index := -2
+var skill_status: Label
+var presented_roll := ""
+var march_at := Vector2(0,4.2)
+var marching := false
+var travel_from := 0.0
 var stage: VBoxContainer
 var screen_body: VBoxContainer
 var viewport_panel: PanelContainer
@@ -46,6 +58,8 @@ var introduction_open = false
 var store_path = "user://campaign.cfg"
 var audio_player: AudioStreamPlayer
 var sounds: Dictionary = {}
+var impacts: Dictionary = {}
+var recorded_impacts := true
 var hit_pending = false
 var dodge_pending = false
 var skill_pending = false
@@ -66,6 +80,7 @@ func _ready() -> void:
 	cfg.load(store_path)
 	game.record.assign(cfg.get_value("chronicle","discovered",[]))
 	motion_reduced = cfg.get_value("options","reduced_motion",false)
+	recorded_impacts = cfg.get_value("options","recorded_impacts",true)
 	text_zoom = cfg.get_value("options","text_scale",1.0)
 	saved_count = game.record.size()
 	introduction_open = not "opening" in game.record
@@ -121,6 +136,13 @@ func build_theme() -> void:
 func row(parent: Node, gap: int = 10) -> HBoxContainer:
 	var layout = HBoxContainer.new()
 	layout.add_theme_constant_override("separation",gap)
+	parent.add_child(layout)
+	return layout
+
+func flow(parent: Node, gap: int = 8) -> HFlowContainer:
+	var layout = HFlowContainer.new()
+	layout.add_theme_constant_override("h_separation",gap)
+	layout.add_theme_constant_override("v_separation",gap)
 	parent.add_child(layout)
 	return layout
 
@@ -199,6 +221,13 @@ func build_shell() -> void:
 	landscape.custom_minimum_size.y = 134
 	landscape.game = game
 	viewport_panel.add_child(landscape)
+	mounted_map = MountedMap.new()
+	viewport_panel.add_child(mounted_map)
+	mounted_map.hide()
+	seal_view = FeatureModel.new()
+	seal_view.custom_minimum_size.y = 125
+	viewport_panel.add_child(seal_view)
+	seal_view.hide()
 	screen_body = column(stage,8)
 	modal = ColorRect.new()
 	modal.color = Color("15100edc")
@@ -234,14 +263,24 @@ func note_dialogue(parent: Node, key: String) -> void:
 		label.text = "%s  %s" % [line_data.character,line_data.text]
 
 func show_phase() -> void:
+	var old_phase = announced_phase
 	empty(screen_body)
 	announced_phase = game.phase
 	screen_body.size_flags_vertical = SIZE_FILL
-	landscape.display = "battle" if game.phase=="battle" else ("travel" if game.phase=="travel" else "map")
+	landscape.display = "battle" if game.phase=="battle" else "map"
 	landscape.reduce_motion = motion_reduced
 	landscape.text_zoom = text_zoom
 	viewport_panel.visible = game.phase in ["title","map","travel","battle","ending","lost"]
+	mounted_map.visible = game.phase in ["map","travel"]
+	seal_view.visible = game.phase=="title"
+	seal_view.reduced = motion_reduced
+	landscape.visible = game.phase in ["battle","ending","lost"]
+	mounted_map.custom_minimum_size.y = 150 if game.phase=="map" else 180
 	landscape.custom_minimum_size.y = 206 if game.phase=="battle" else 125
+	if mounted_map.visible:
+		if old_phase=="camp" and game.phase=="map": march_at = MountedMap.TRAILS[0][0]
+		mounted_map.point = march_at
+		mounted_map.setup(game.chapter,game.entry().routes,game.supply)
 	primary_button = null
 	match game.phase:
 		"title":
@@ -250,7 +289,7 @@ func show_phase() -> void:
 			map_view()
 		"travel":
 			words(screen_body,"%s으로 이동 중" % game.entry().name,22,GOLD)
-			words(screen_body,"선택한 경유지  %s" % game.entry().routes[game.selected_route][0],15,SUBTLE)
+			words(screen_body,"경유지 %s" % game.entry().routes[game.selected_route][0],15,SUBTLE)
 			primary_button = action(screen_body,"전장으로",complete_travel,true)
 		"battle":
 			battle_view()
@@ -264,7 +303,7 @@ func show_phase() -> void:
 
 func title_view() -> void:
 	words(screen_body,"초한: 한왕의 길",41)
-	words(screen_body,"기원전 206년부터 202년까지, 한중에서 즉위까지",17,GOLD)
+	words(screen_body,"한중에서 즉위까지, 기원전 206년부터 202년",17,GOLD)
 	if introduction_open:
 		note_dialogue(screen_body,"opening")
 	var intro_action = "도입 접기" if introduction_open else "도입 다시 보기"
@@ -273,12 +312,12 @@ func title_view() -> void:
 	primary_button = action(controls,"역사 행군 시작",start_historical,true)
 	action(controls,"가상 행군 시작",start_fictional)
 	run_seed = LineEdit.new()
-	run_seed.placeholder_text = "시드 번호 · 비우면 무작위"
+	run_seed.placeholder_text = "예: 12345"
 	run_seed.accessibility_name = "시드 번호"
 	run_seed.max_length = 12
 	run_seed.size_flags_horizontal = SIZE_EXPAND_FILL
 	controls.add_child(run_seed)
-	words(screen_body,"매번 전장과 보상이 달라집니다. 패배하면 편성·보급·강화를 잃고 행군 기록을 남깁니다.",14,SUBTLE,true)
+	words(screen_body,"시드 번호를 비우면 무작위로 시작합니다. 패배하면 편성, 보급, 강화가 초기화되고 행군 기록은 남습니다.",14,SUBTLE,true)
 	if not checkpoint_data.is_empty() and checkpoint_data.get("phase") in ["map","travel","camp"]:
 		action(controls,"이어하기",continue_run)
 
@@ -288,7 +327,9 @@ func toggle_intro() -> void:
 
 func continue_run() -> void:
 	if game.restore(checkpoint_data):
+		march_at = checkpoint_data.get("march_at",MountedMap.TRAILS[0][0])
 		travel_time = 0.0
+		travel_from = 0.0
 		show_phase()
 
 func start_historical() -> void:
@@ -300,10 +341,12 @@ func start_fictional() -> void:
 func start_run(mode: String) -> void:
 	var value = run_seed.text.strip_edges() if is_instance_valid(run_seed) else ""
 	if not value.is_empty() and not value.is_valid_int():
-		run_seed.placeholder_text = "숫자로 입력하거나 모두 지우세요."
+		run_seed.placeholder_text = "숫자만 입력하세요. 무작위 행군은 칸을 비우세요."
 		run_seed.clear()
 		run_seed.grab_focus()
 		return
+	march_at = MountedMap.TRAILS[0][0]
+	presented_roll = ""
 	game.new_run(value.to_int() if value.is_valid_int() else randi_range(100000,99999999),mode)
 	show_phase()
 	save()
@@ -326,12 +369,27 @@ func map_view() -> void:
 		words(choice,"%s  /  %s" % [path[1],path[2]],14,SUBTLE)
 		var forecast = game.preview_route(i)
 		words(choice,"%s · 적 %d명%s" % [forecast.weather,forecast.opponents,"(추격대 별도)" if game.chapter==1 else ""],14,GOLD,true)
-	words(screen_body,"경유지, 경로와 전장 과제는 창작입니다.",13,SUBTLE)
+	map_prompt = words(screen_body,"",14,PAPER,true)
+	map_prompt_index = -2
+	refresh_map_prompt(mounted_map.nearby)
+	words(screen_body,"지형과 경유지는 창작입니다.",13,SUBTLE)
+
+func refresh_map_prompt(index: int) -> void:
+	if not is_instance_valid(map_prompt) or map_prompt_index==index: return
+	map_prompt_index = index
+	if index<0:
+		map_prompt.text = "WASD 또는 방향키로 말을 모세요. 깃발 가까이에서 E로 출발하거나 Tab으로 경유지를 고르세요."
+	else:
+		var path: Array = game.entry().routes[index]
+		var suffix = "보급 부족으로 출발할 수 없습니다." if game.supply+path[3]<0 else "E로 출발"
+		var forecast = game.preview_route(index)
+		map_prompt.text = "%s / %s, %s, 적 %d명 / %s / %s" % [path[0],path[2],forecast.weather,forecast.opponents,game.entry().goal,suffix]
 
 func choose_route(index: int) -> void:
 	if game.choose_route(index):
 		save()
 		travel_time = 0.0
+		travel_from = 1.0 if mounted_map.nearby==index else 0.0
 		show_phase()
 		if motion_reduced:
 			complete_travel()
@@ -351,33 +409,57 @@ func battle_view() -> void:
 	if game.chapter==3:
 		note_dialogue(screen_body,"gaixia_route")
 	field_status = words(screen_body,"",14,SUBTLE)
-	words(screen_body,"WASD 이동   ·   마우스 / J 공격   ·   Space / Shift 회피   ·   E 길게   ·   F 강화 공격   ·   Esc 일시정지",14,SUBTLE)
+	skill_status = words(screen_body,"",14,PAPER,true)
+	words(screen_body,"WASD 이동 / 마우스 또는 J 공격 / Space 또는 Shift 회피 / E 길게 상호작용 / Esc 일시정지",14,SUBTLE,true)
 	refresh_battle()
 
 func refresh_battle() -> void:
-	if not is_instance_valid(action_status):
+	if not is_instance_valid(action_status) or game.team.is_empty():
 		return
 	var status = ["관문 주변의 적을 먼저 정리하세요.", "구출 %d/2  ·  추격대 %d/4" % [game.rescued,game.patrol], "수레 HP %d  ·  성고까지 %d%%" % [maxi(0,roundi(game.wagon_hp)),roundi((game.wagon.x-112)/444*100)], "방책 %d/2  ·  %s" % [game.gates,"적장 항우" if game.mode=="history" else "가상 지휘관"]][game.chapter]
 	var evasion = "회피 준비" if game.dodge_cd<=0 else "회피 %.1f초" % game.dodge_cd
 	action_status.text = "%s   /   %s   /   %s" % [status,evasion,game.tactic_name()]
-	trail_status.text = "안전한 첫 예고: 좌우 방향과 함께 Space 또는 Shift로 피하세요." if game.training_ticks>0 else (last_message if last_message_left>0 else game.entry().description)
+	trail_status.text = "예고가 보이면 좌우로 움직이며 Space 또는 Shift를 누르세요." if game.training_ticks>0 else (last_message if last_message_left>0 else game.entry().description)
 	field_status.text = scene_variant_text.get(game.field_rule,"") if game.scout_bonus.is_empty() else game.scout_bonus
+	var id: String = game.player_skill
+	var player: Dictionary = game.team[0]
+	var cooldown: float = player.cool.get(id,0.0)
+	var cost: int = Campaign.ABILITIES[id][0]
+	var availability = "%.1f초 후" % cooldown if cooldown>0 else ("MP 부족" if player.mp<cost else "사용 가능")
+	skill_status.text = "F %s / %s / MP %d/%d, 소모 %d / %s%s" % [
+		Campaign.SKILL_INFO[id][0],Campaign.SKILL_INFO[id][1],floori(player.mp),player.max_mp,cost,availability,
+		" / R 특기 전환" if game.player_skills().size()>1 else ""]
 
 func camp_view() -> void:
 	words(screen_body,game.last_result,25,GOLD)
+	var columns = row(screen_body,12)
+	columns.size_flags_vertical = SIZE_EXPAND_FILL
 	var scroll = ScrollContainer.new()
+	scroll.size_flags_horizontal = SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	scroll.custom_minimum_size.y = 305
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	screen_body.size_flags_vertical = SIZE_EXPAND_FILL
-	screen_body.add_child(scroll)
+	columns.add_child(scroll)
 	var sheet = column(scroll,11)
 	sheet.size_flags_horizontal = SIZE_EXPAND_FILL
 	words(sheet,"야영지  /  보급 %d  /  %s" % [game.supply,game.tactic_name()],20)
 	if game.chapter==1:
 		note_dialogue(sheet,"rescued")
-	words(sheet,"조정 전 비용과 18면 확률을 보세요. 강화를 고르면 등용 결과가 확정되고 다음 지도가 열립니다.",15,SUBTLE,true)
-	var options = row(sheet)
+	words(sheet,"처음 굴리기는 무료입니다. 확률을 바꾸면 보급 1을 씁니다. 강화를 고르면 등용을 확정하고 출발합니다.",15,SUBTLE,true)
+	var die_column = column(columns,5)
+	die_column.custom_minimum_size.x = 155
+	dice_view = FeatureModel.new()
+	dice_view.seal = false
+	dice_view.reduced = motion_reduced
+	dice_view.custom_minimum_size = Vector2(155,160)
+	die_column.add_child(dice_view)
+	var number = game.draft_result.get_slice("면",0).to_int()
+	dice_view.set_face(number,game.draft_result!=presented_roll and not motion_reduced)
+	presented_roll = game.draft_result
+	var face_label = words(die_column,"눈 %d / 18" % number if number>0 else "18면 등용 주사위",15,GOLD)
+	face_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var options = flow(sheet)
 	for option in [["balance","균형 · 무료"],["shield","방패 우대 · 보급 1"],["lance","장병기 우대 · 보급 1"]]:
 		var id: String = option[0]
 		var b = action(options,option[1]+(" ✓" if game.draft_plan==id else ""),change_odds.bind(id))
@@ -387,30 +469,38 @@ func camp_view() -> void:
 	for i in weights.size():
 		numbers.append("%s %d/18 · %.1f%%" % [Campaign.HEROES[Campaign.DRAFT[i]][0],weights[i],float(weights[i])/18*100])
 	words(sheet,"   /   ".join(numbers),14, GOLD,true)
-	var rolls = row(sheet)
+	var rolls = flow(sheet)
 	primary_button = action(rolls,"18면 주사위 굴리기",perform_roll,true)
 	primary_button.disabled = game.draft_done
-	var again = action(rolls,"결과 바꾸기 · 보급 2",perform_redraw)
+	var again = action(rolls,"다시 굴리기 / 보급 2",perform_redraw)
 	again.disabled = not game.draft_done or game.rerolled or game.supply<2
 	words(sheet,game.draft_result,16,PAPER)
-	var choices = row(sheet)
+	var choices = flow(sheet)
 	for id in game.hero_keys:
 		var marks: Array = game.names_upgrades[id]
 		var title: String = Campaign.HEROES[id][0] + " · " + Campaign.HEROES[id][2]
 		var candidate = action(choices,title + (" ✓" if id==game.offered_to else ""),focus_candidate.bind(id))
-		candidate.tooltip_text = "보유 특기 %d개" % marks.size()
+		candidate.tooltip_text = "고른 강화 %d개" % marks.size()
 	var active = game.names_upgrades[game.offered_to]
 	var names: Array[String] = []
 	for perk in Campaign.PLAN.perks:
 		if perk.id in active: names.append(perk.name)
-	words(sheet,"%s의 보유 특기  %s" % [Campaign.HEROES[game.offered_to][0],", ".join(names) if not names.is_empty() else "없음"],15,SUBTLE)
+	words(sheet,"%s의 강화 %s" % [Campaign.HEROES[game.offered_to][0],", ".join(names) if not names.is_empty() else "없음"],15,SUBTLE,true)
+	var role_skill: String = {"fan":"shield","xiao":"heal","han":"cover","xiang":"pierce","cao":"pierce"}.get(game.offered_to,"command")
+	var sheet_skills: Array = game.player_skills() if game.offered_to=="liu" else [role_skill]
+	for skill in sheet_skills:
+		var info: Array = Campaign.SKILL_INFO[skill]
+		var price: Array = Campaign.ABILITIES[skill]
+		words(sheet,"%s / %s / MP %d, 재사용 %.1f초" % [info[0],info[1],price[0],price[1]],14,SUBTLE,true)
 	for perk in game.offerings:
-		var b = action(sheet,"%s  /  %s  /  %s" % [perk.name,perk.tag,perk.text],choose_perk.bind(perk.id))
+		var upgrade = column(sheet,3)
+		var b = action(upgrade,"%s / %s" % [perk.name,perk.tag],choose_perk.bind(perk.id))
+		words(upgrade,perk.text,14,SUBTLE,true)
 		if game.draft_done and primary_button.disabled: primary_button = b
 	if game.draft_done:
-		words(sheet,"강화 선택 뒤 행군 지도로 돌아갑니다.",14,SUBTLE)
+		words(sheet,"강화 하나를 고르면 다음 행군 지도가 열립니다.",14,SUBTLE)
 	else:
-		words(sheet,"등용을 건너뛰려면 강화부터 고르세요.",14,SUBTLE)
+		words(sheet,"등용을 건너뛰려면 바로 강화를 고르세요.",14,SUBTLE)
 
 func change_odds(id: String) -> void:
 	if game.change_plan(id):
@@ -492,6 +582,7 @@ func show_menu() -> void:
 	action(modal_content,"행군 기록",show_archive)
 	action(modal_content,"움직임 줄이기  %s" % ("켜짐" if motion_reduced else "꺼짐"),toggle_motion)
 	action(modal_content,"글자 크기  %d%%" % roundi(text_zoom*100),toggle_text)
+	action(modal_content,"충돌음  %s" % ("녹음" if recorded_impacts else "합성"),toggle_impacts)
 	if game.phase!="title":
 		action(modal_content,"시작 화면으로",confirm_end)
 	action(modal_content,"종료",get_tree().quit)
@@ -499,8 +590,8 @@ func show_menu() -> void:
 
 func confirm_end() -> void:
 	activate_modal()
-	words(modal_content,"현재 행군을 끝낼까요?",26,GOLD)
-	words(modal_content,"이번 편성, 보급, 강화는 초기화되고 행군 기록은 남습니다.",16,SUBTLE,true)
+	words(modal_content,"이번 행군을 끝낼까요?",26,GOLD)
+	words(modal_content,"이번 편성, 보급, 강화는 잃습니다. 행군 기록은 남습니다.",16,SUBTLE,true)
 	var first = action(modal_content,"행군 계속",close_modal,true)
 	action(modal_content,"행군 끝내고 시작 화면으로",back_to_title)
 	defer_focus.call_deferred(first)
@@ -520,6 +611,8 @@ func show_archive() -> void:
 func toggle_motion() -> void:
 	motion_reduced = not motion_reduced
 	landscape.reduce_motion = motion_reduced
+	seal_view.reduced = motion_reduced
+	if is_instance_valid(dice_view): dice_view.reduced = motion_reduced
 	save()
 	show_menu()
 
@@ -530,10 +623,15 @@ func toggle_text() -> void:
 	save()
 	show_menu()
 
+func toggle_impacts() -> void:
+	recorded_impacts = not recorded_impacts
+	save()
+	show_menu()
+
 func show_save_error() -> void:
 	activate_modal()
-	words(modal_content,"행군 기록을 저장할 수 없습니다.",24,GOLD)
-	words(modal_content,"저장 폴더에 쓸 수 있는지 확인한 뒤 다시 시도하세요.",16,PAPER,true)
+	words(modal_content,"행군을 저장하지 못했습니다.",24,GOLD)
+	words(modal_content,"저장 폴더의 쓰기 권한과 남은 공간을 확인한 뒤 다시 시도하세요.",16,PAPER,true)
 	defer_focus.call_deferred(action(modal_content,"돌아가기",close_modal,true))
 
 func save() -> bool:
@@ -541,7 +639,10 @@ func save() -> bool:
 	var data = checkpoint_data if game.phase=="title" and not checkpoint_data.is_empty() else game.checkpoint()
 	cfg.set_value("chronicle","discovered",game.record)
 	cfg.set_value("options","reduced_motion",motion_reduced)
+	cfg.set_value("options","recorded_impacts",recorded_impacts)
 	cfg.set_value("options","text_scale",text_zoom)
+	if game.phase=="map":
+		data["march_at"] = march_at
 	cfg.set_value("checkpoint","state",data)
 	var temporary = store_path+".tmp"
 	var code = cfg.save(temporary)
@@ -568,20 +669,30 @@ func _input(event: InputEvent) -> void:
 				close_modal()
 			else:
 				show_menu()
+		elif game.phase=="map" and not modal_active and event.physical_keycode in [KEY_UP,KEY_DOWN,KEY_LEFT,KEY_RIGHT]:
+			get_viewport().set_input_as_handled()
+		elif game.phase=="map" and not modal_active and event.physical_keycode==KEY_E:
+			get_viewport().set_input_as_handled()
+			if mounted_map.nearby>=0:
+				choose_route(mounted_map.nearby)
 		elif game.phase=="battle" and not modal_active:
 			if event.physical_keycode in [KEY_SPACE,KEY_SHIFT]:
 				dodge_pending = true
 				get_viewport().set_input_as_handled()
 			if event.physical_keycode==KEY_F:
 				skill_pending = true
+			if event.physical_keycode==KEY_R and not skill_pending:
+				game.cycle_skill()
+				get_viewport().set_input_as_handled()
 
 func _process(dt: float) -> void:
 	if not is_instance_valid(landscape):
 		return
 	if game.phase=="travel" and not modal_active:
 		travel_time += dt
-		landscape.transfer = minf(1,travel_time/0.85)
-		if travel_time>=0.85:
+		var duration = 0.40 if travel_from>=1.0 else 1.10
+		mounted_map.travel(game.selected_route,lerpf(travel_from,1.0,minf(1,travel_time/duration)),dt,motion_reduced)
+		if travel_time>=duration:
 			complete_travel()
 	if game.phase!=announced_phase:
 		show_phase()
@@ -595,7 +706,16 @@ func _process(dt: float) -> void:
 func _physics_process(dt: float) -> void:
 	if not is_instance_valid(landscape):
 		return
-	if game.phase=="battle" and not modal_active and (get_window().has_focus() or DisplayServer.get_name()=="headless"):
+	var focused = get_window().has_focus() or DisplayServer.get_name()=="headless"
+	if game.phase=="map" and not modal_active and focused:
+		var direction = Vector2(
+			float(Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)),
+			float(Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP)))
+		refresh_map_prompt(mounted_map.ride(direction,dt,motion_reduced))
+		march_at = mounted_map.point
+		if marching and direction.is_zero_approx(): save()
+		marching = not direction.is_zero_approx()
+	if game.phase=="battle" and not modal_active and focused:
 		combat_input(dt)
 	else:
 		hit_pending = false
@@ -618,13 +738,11 @@ func combat_input(dt: float) -> void:
 		last_message = game.events.back()
 		last_message_left = 2.0
 		for event in game.events:
-			if event=="회피 성공":
-				play("dodge")
-			elif event in ["응급 처치","방패 엄호","약낭 돌파"]:
-				play("support")
+			if event in ["응급 처치","방패 엄호","약낭 돌파","굳건한 자세","숨 고르기","지원 사격","돌파 찌르기"]:
+				game.queue_cue("support",2)
 		game.events.clear()
-	if game.traces.any(func(trace): return trace.kind=="damage" and trace.life>0.53):
-		play("impact")
+	if not game.sound_cue.is_empty():
+		play(game.sound_cue)
 	hit_pending = false
 	dodge_pending = false
 	skill_pending = false
@@ -633,7 +751,14 @@ func build_sound() -> void:
 	audio_player = AudioStreamPlayer.new()
 	audio_player.volume_db = -18
 	add_child(audio_player)
-	for entry in [["dodge",190.0],["support",660.0],["impact",112.0]]:
+	impacts = {
+		"block":preload("res://assets/audio/impactMetal_heavy_000.ogg"),
+		"sword_impact":preload("res://assets/audio/impactPlate_medium_000.ogg"),
+		"axe_impact":preload("res://assets/audio/impactPunch_medium_000.ogg"),
+		"bow_impact":preload("res://assets/audio/impactPlank_medium_000.ogg"),
+		"spear_impact":preload("res://assets/audio/impactPlank_medium_000.ogg"),
+	}
+	for entry in [["dodge",190.0],["support",660.0],["impact",112.0],["whiff",78.0],["loose",305.0]]:
 		var sound = AudioStreamWAV.new()
 		sound.format = AudioStreamWAV.FORMAT_16_BITS
 		sound.mix_rate = 22050
@@ -646,5 +771,6 @@ func build_sound() -> void:
 		sounds[entry[0]] = sound
 
 func play(which: String) -> void:
-	audio_player.stream = sounds[which]
+	if AudioServer.is_bus_mute(0): return
+	audio_player.stream = impacts[which] if recorded_impacts and impacts.has(which) else sounds.get(which,sounds["impact"])
 	audio_player.play()

@@ -1,0 +1,16 @@
+Kenney Impact Sounds, version 1.0 (2019)
+By Kenney / Kenney Vleugels
+License: Creative Commons CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/legalcode
+https://kenney.nl/assets/impact-sounds
+
+Bundled unmodified Ogg Vorbis files:
+impactMetal_heavy_000.ogg
+impactPlate_medium_000.ogg
+impactPlank_medium_000.ogg
+impactPunch_medium_000.ogg
+
+Original source identified by Kenney. Bytes downloaded from the CC0
+mirror at Mcamento8/open-game-sfx-index, commit
+34bbe8b525b5ceff3804915ea745532af11f6055/audio/impact-sounds
+because the Kenney direct asset download returned HTTP 403.

@@ -13,3 +13,9 @@
 - [LimboAI v1.7.1](https://github.com/limbonaut/limboai/releases/tag/v1.7.1)은 GDExtension 4.6용 공식 ZIP을 받습니다. 고정 버전, SHA-256과 대상 경로는 `fetch-dependencies.sh`에서 확인할 수 있습니다. MIT 고지는 `han-march/licenses/LimboAI.txt`에 있습니다.
 - [Nightfall](https://github.com/nykadamec/nightfall/tree/c6e36509885cfcbf054cfa1c7a48ab28f83f1a90)의 데이터 구조를 참고했습니다. 고지는 `han-march/licenses/Nightfall.txt`에 있습니다.
 - 전장 도트는 이 프로젝트에서 작성했습니다. `han-march/design/paint_march.py`와 아틀라스를 포함합니다. [LibreSprite 1.3](https://github.com/LibreSprite/LibreSprite/tree/cdb12a323ce5ec4fce3512bc6590a90228f15bb9)은 편집에 사용한 별도 GPL v2 도구입니다.
+
+## 기마 지도와 충돌음
+
+3D 지형, 인장, 주사위와 셰이더는 프로젝트에서 작성했습니다. [MengTo의 Skills 저장소](https://github.com/MengTo/Skills/tree/05043c3b37d20a6943762fc219a7797c214b8bb0)의 지도와 전투 연출 설명을 참고했습니다. 고대 청동 인장의 물성을 참고했으며 소장품 이미지와 데모 코드는 포함하지 않았습니다.
+
+[Kenney Impact Sounds](https://kenney.nl/assets/impact-sounds)의 CC0 샘플 네 개가 쓰입니다. 파일별 이름과 내려받은 고정 출처는 [충돌음 고지](han-march/licenses/Kenney-Impact-Sounds.txt)에 있습니다.
