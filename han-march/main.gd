@@ -278,7 +278,7 @@ func title_view() -> void:
 	run_seed.max_length = 12
 	run_seed.size_flags_horizontal = SIZE_EXPAND_FILL
 	controls.add_child(run_seed)
-	words(screen_body,"가상 행군에서는 항우를 등용할 수 있습니다.",14,SUBTLE)
+	words(screen_body,"매번 전장과 보상이 달라집니다. 패배하면 편성·보급·강화를 잃고 행군 기록을 남깁니다.",14,SUBTLE,true)
 	if not checkpoint_data.is_empty() and checkpoint_data.get("phase") in ["map","travel","camp"]:
 		action(controls,"이어하기",continue_run)
 
@@ -324,6 +324,8 @@ func map_view() -> void:
 		b.disabled = game.supply + path[3]<0
 		if i==0: primary_button = b
 		words(choice,"%s  /  %s" % [path[1],path[2]],14,SUBTLE)
+		var forecast = game.preview_route(i)
+		words(choice,"%s · 적 %d명%s" % [forecast.weather,forecast.opponents,"(추격대 별도)" if game.chapter==1 else ""],14,GOLD,true)
 	words(screen_body,"경유지, 경로와 전장 과제는 창작입니다.",13,SUBTLE)
 
 func choose_route(index: int) -> void:
@@ -359,7 +361,7 @@ func refresh_battle() -> void:
 	var evasion = "회피 준비" if game.dodge_cd<=0 else "회피 %.1f초" % game.dodge_cd
 	action_status.text = "%s   /   %s   /   %s" % [status,evasion,game.tactic_name()]
 	trail_status.text = "안전한 첫 예고: 좌우 방향과 함께 Space 또는 Shift로 피하세요." if game.training_ticks>0 else (last_message if last_message_left>0 else game.entry().description)
-	field_status.text = scene_variant_text.get(game.field_rule,"")
+	field_status.text = scene_variant_text.get(game.field_rule,"") if game.scout_bonus.is_empty() else game.scout_bonus
 
 func camp_view() -> void:
 	words(screen_body,game.last_result,25,GOLD)

@@ -12,6 +12,7 @@ static func pilot(g: Campaign, limit: int) -> int:
 		var hold = false
 		var desired: Array = []
 		for point in g.targets:
+			if point[0] in ["beacon","cache","watch"]: continue
 			if point[0]=="exit" and g.rescued<2: continue
 			if point[0]=="flag" and not g.nearest(point[1],g.foes,80).is_empty(): continue
 			if desired.is_empty() or p.distance_to(point[1])<p.distance_to(desired[1]): desired=point

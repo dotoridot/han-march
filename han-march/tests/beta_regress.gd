@@ -8,6 +8,7 @@ var finished = 0
 var cleared = 0
 var rolls = {}
 var trace_hash = 0
+var mode_route_pairs = {}
 
 func _initialize() -> void:
 	call_deferred("verify")
@@ -22,6 +23,7 @@ func trial(seed_value: int, mode: String, route_mask: int) -> void:
 	var game = Campaign.new()
 	game.mount(root)
 	game.new_run(seed_value,mode)
+	mode_route_pairs[mode+":"+str(route_mask)] = true
 	var replay = Campaign.new()
 	replay.mount(root)
 	var checkpoint_before = game.checkpoint()
@@ -71,10 +73,12 @@ func trial(seed_value: int, mode: String, route_mask: int) -> void:
 func verify() -> void:
 	var starting = OS.get_environment("HAN_MARCH_MATRIX_START").to_int()
 	var count = maxi(1,OS.get_environment("HAN_MARCH_MATRIX_COUNT").to_int())
+	var cross_modes = OS.get_environment("HAN_MARCH_MATRIX_CROSS_MODES")=="1"
 	for n in count:
 		var id = starting+n
-		trial(1000+id*7919,"history" if n%2==0 else "fiction",id%16)
+		var group = int(id/16.0) if cross_modes else id
+		trial(1000+id*7919,"history" if group%2==0 else "fiction",id%16)
 		await process_frame
-	print(JSON.stringify({"start":starting,"count":count,"checks":checks,"failed":failures,"founding":finished,"completed_intermediate":cleared,"drafts":rolls.keys(),"replay_digest":trace_hash}))
+	print(JSON.stringify({"start":starting,"count":count,"checks":checks,"failed":failures,"founding":finished,"completed_intermediate":cleared,"drafts":rolls.keys(),"replay_digest":trace_hash,"mode_route_pairs":mode_route_pairs.size()}))
 	await process_frame
 	quit(1 if failures else 0)

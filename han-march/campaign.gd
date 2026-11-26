@@ -48,6 +48,7 @@ var selected_route = -1
 var battle_seed = 0
 var field_rule = ""
 var board_mask = {"fog":false,"mud":false,"ridge":false}
+var scout_bonus = ""
 var hero_keys: Array = []
 var names_upgrades: Dictionary = {}
 var team: Array = []
@@ -151,6 +152,20 @@ func remember(id: String) -> void:
 func entry() -> Dictionary:
 	return PLAN.chapters[mini(chapter,PLAN.chapters.size()-1)]
 
+func route_details(index: int, ticket: int) -> Dictionary:
+	var seed_for_field = hash([ticket,chapter,index])
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed_for_field
+	var weather: String = ["안개","진흙","고지"][rng.randi_range(0,2)]
+	return {"seed":seed_for_field,"weather":weather,
+		"opponents":maxi(3,entry().enemies+entry().routes[index][4])+(1 if chapter==3 else 0)}
+
+func preview_route(index: int) -> Dictionary:
+	var peek = RandomNumberGenerator.new()
+	peek.seed = field_rng.seed
+	peek.state = field_rng.state
+	return route_details(index,peek.randi())
+
 func choose_route(index: int) -> bool:
 	if phase != "map" or index < 0 or index >= entry().routes.size():
 		return false
@@ -159,11 +174,10 @@ func choose_route(index: int) -> bool:
 		return false
 	selected_route = index
 	supply = clampi(supply+path[3],0,9)
-	battle_seed = hash([field_rng.randi(),chapter,index])
+	var proposed = route_details(index,field_rng.randi())
+	battle_seed = proposed.seed
 	combat_start_state = combat_rng.state
-	var rng = RandomNumberGenerator.new()
-	rng.seed = battle_seed
-	field_rule = ["안개","진흙","고지"][rng.randi_range(0,2)]
+	field_rule = proposed.weather
 	board_mask = {"fog":field_rule=="안개","mud":field_rule=="진흙","ridge":field_rule=="고지"}
 	phase = "travel"
 	return true
@@ -201,6 +215,7 @@ func enter_battle() -> void:
 	patrol = 0
 	rescued = 0
 	training_ticks = 0
+	scout_bonus = ""
 	if chapter==1:
 		rescue_order.clear()
 	gates = 0
@@ -233,6 +248,13 @@ func enter_battle() -> void:
 		[],
 		[["gate_a",Vector2(156+offset,132),"서쪽 방책"],["gate_b",Vector2(485+offset,117),"동쪽 방책"]],
 	][chapter]
+	if chapter==0:
+		var event = {
+			"안개":["beacon",Vector2(132,238),"봉화 켜기"],
+			"진흙":["cache",Vector2(475,260),"수레에서 보급 건지기"],
+			"고지":["watch",Vector2(496,137),"고지 파발 만나기"],
+		}
+		targets.append(event[field_rule])
 	var count: int = entry().enemies + entry().routes[selected_route][4]
 	for i in maxi(3,count):
 		var origin = Vector2(rng.randf_range(87,553),rng.randf_range(64,157))
@@ -493,6 +515,20 @@ func interact(player: Dictionary, dt: float, pressed: bool) -> void:
 	hold = 0
 	hold_target = ""
 	match target[0]:
+		"beacon":
+			board_mask.fog = false
+			scout_bonus = "봉화를 밝혀 활 사거리를 되찾았습니다."
+			events.append(scout_bonus)
+		"cache":
+			supply = mini(9,supply+2)
+			scout_bonus = "수레에서 보급 2를 건졌습니다."
+			events.append(scout_bonus)
+		"watch":
+			for ally in alive(team):
+				ally.fatigue = maxf(0,ally.fatigue-32)
+				ally.mp = minf(ally.max_mp,ally.mp+10)
+			scout_bonus = "고지 파발의 엄호로 피로가 줄고 MP가 회복됐습니다."
+			events.append(scout_bonus)
 		"flag","exit": finish_battle(true)
 		"wounded_a","wounded_b":
 			rescued += 1
