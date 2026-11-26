@@ -13,9 +13,9 @@ const WRIST = 8.1
 const SHIN = 7.7
 const THIGH = 7.0
 const MOTION = {
-	"sword":[Vector3(-1.35,4,-1),Vector3(-0.85,4,-1),Vector3(0.0,15,2.5),Vector3(0.87,11,2),Vector3(0.5,7,0)],
-	"axe":[Vector3(-1.55,4,-2),Vector3(-1.15,5,-2),Vector3(0.0,13,2),Vector3(0.98,10,3),Vector3(0.62,7,0)],
-	"bow":[Vector3(-0.12,11,-1),Vector3(0,14,-1),Vector3(0,15,0.7),Vector3(0.06,13,0),Vector3(0.12,8,0)],
+	"sword":[Vector3(-1.38,5,-1.1),Vector3(-0.76,8,-0.7),Vector3(0,15,2.5),Vector3(0.92,10,1.8),Vector3(0.60,8,0.5)],
+	"axe":[Vector3(-1.60,4,-2.0),Vector3(-1.32,5,-2.1),Vector3(0,13,2),Vector3(1.05,12,3),Vector3(0.74,8,1.1)],
+	"bow":[Vector3(-0.24,11,-0.5),Vector3(-0.04,14,-1.1),Vector3(0,15,0.7),Vector3(0.12,13,0.2),Vector3(0.26,10,0)],
 	"spear":[Vector3(-0.2,2,-2),Vector3(-0.1,3,-2),Vector3(0,15,3),Vector3(0.08,11,1),Vector3(0.2,7,0)],
 	"aid":[Vector3(-0.33,5,-1),Vector3(-0.4,7,-1),Vector3(0,12,1),Vector3(0.12,10,1),Vector3(0.26,6,0)],
 }
@@ -23,6 +23,12 @@ const CONTOURS = "res://assets/illustration/contours.json"
 const VIEW_MARGIN = 0.12
 const VIEW_STEPS = [Vector2.DOWN,Vector2.RIGHT,Vector2.UP,Vector2.LEFT]
 const KEY_TIMES = [0.0,0.29,0.55,0.77,1.0]
+const WEAPON_TIMES = {
+	"sword":[0.09,0.34,0.55,0.68,0.88],
+	"axe":[0.12,0.41,0.55,0.72,0.91],
+	"bow":[0.11,0.44,0.55,0.64,0.87],
+}
+const IDLE_HAND = Vector3(0.43,8.5,0)
 static var fabric: CanvasTexture
 static var poses: AnimationLibrary
 static var outlines: Array[PackedVector2Array] = []
@@ -125,8 +131,12 @@ static func init_resources() -> void:
 		var track = clip.add_track(Animation.TYPE_VALUE)
 		clip.track_set_path(track,NodePath(".:phase_motion"))
 		clip.track_set_interpolation_type(track,Animation.INTERPOLATION_CUBIC)
-		for i in KEY_TIMES.size():
-			clip.track_insert_key(track,KEY_TIMES[i],MOTION[kind][i])
+		var times: Array = WEAPON_TIMES.get(kind,KEY_TIMES)
+		if WEAPON_TIMES.has(kind):
+			clip.track_insert_key(track,0.0,IDLE_HAND)
+			clip.track_insert_key(track,1.0,IDLE_HAND)
+		for i in times.size():
+			clip.track_insert_key(track,times[i],MOTION[kind][i])
 		poses.add_animation(kind,clip)
 
 func link(parent: Node2D, title: String, at: Vector2, length_value: float) -> Bone2D:
@@ -215,6 +225,8 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 	var reach := 8.5
 	var angle := direction.angle()+0.43*side
 	var lift := 0.0
+	var attack_stance := 0.0
+	var bow_pull := 0.0
 	if not activity.is_empty():
 		var age: float = activity.step
 		var impact: float = activity.impact
@@ -224,7 +236,11 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 		angle = direction.angle()+phase_motion.x*side
 		reach = phase_motion.y
 		weight = phase_motion.z if not reduced else 0.0
-		lift = 1.7 if weapon=="axe" and age<impact else 0.0
+		attack_stance = smoothstep(0,0.10,time)*(1.0-smoothstep(0.88,1,time)) if WEAPON_TIMES.has(weapon) else 1.0
+		if weapon=="axe" and age<impact:
+			lift = 1.7*smoothstep(0,0.12,time)*(1.0-smoothstep(0.41,0.55,time))
+		if weapon=="bow" and age<impact:
+			bow_pull = smoothstep(0,0.32,time)
 		if activity.special and not reduced: weight *= 1.18
 	if evading and not reduced: weight = 3.7
 	var recoil = Vector2.ZERO if reduced else Vector2(unit.recoil)*clampf(unit.hit/0.17,0,1)
@@ -239,8 +255,7 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 		var stride = cycle*foot_sign*4.3
 		var planted = Vector2(foot_sign*4.7,-1.0)+direction*stride
 		planted.y -= maxf(0.0,stride)*0.35
-		if not activity.is_empty():
-			planted += direction*(1.7 if i==0 else -1.2)
+		planted += direction*(1.7 if i==0 else -1.2)*attack_stance
 		aim_limb(thighs[i],boots[i],planted,THIGH,SHIN,-foot_sign)
 	var forward = Vector2.from_angle(angle)
 	var hand = Vector2(2.9*side,5.0)+forward*reach+Vector2(0,-lift)
@@ -249,15 +264,15 @@ func present(unit: Dictionary, reduced: bool, evading: bool) -> void:
 	arms[0].position = Vector2(-5.9*side,-1.3*(1.0-absf(side)))
 	aim_limb(arms[1],forearms[1],hand,ARM,WRIST,side)
 	if weapon=="axe":
-		offhand = Vector2(-4*side,6)+direction*(6.3 if not activity.is_empty() else 2.4)
+		offhand = Vector2(-4*side,6)+direction*lerpf(2.4,6.3,attack_stance)
 	elif weapon=="bow":
-		var drawn = not activity.is_empty() and activity.step<activity.impact
+		var drawn = bow_pull>=0.5
 		if drawn!=bent_bow.visible:
 			blade.visible = not drawn
 			bent_bow.visible = drawn
 		arrow.visible = drawn
 		var grip = core.to_local(forearms[1].to_global(Vector2(0,WRIST)))
-		offhand = grip-forward*(14.0 if drawn else 6.2)
+		offhand = grip-forward*lerpf(6.2,14.0,bow_pull)
 	elif weapon=="spear":
 		offhand = hand-forward*11
 	aim_limb(arms[0],forearms[0],offhand,ARM,WRIST,-side)

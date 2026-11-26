@@ -114,16 +114,23 @@ func weapon_proof(id: String) -> void:
 	field.sync_figures()
 	picture(id+"-before-00",true)
 	picture(id+"-after-00")
+	var idle_tool: Transform2D = rig(unit).tool.global_transform
 	game.attack(unit,unit.p+Vector2.RIGHT*100)
+	field.sync_figures()
+	expect(rig(unit).tool.global_transform.is_equal_approx(idle_tool),"The first presentation key joins the idle weapon pose")
 	# Existing combat rules own this exact attack lifetime and contact tick.
 	var impact: int = unit.attack.impact
 	var duration: int = unit.attack.duration
 	var frame_count := 0
 	for tick in duration:
+		var prior_tool: Transform2D = rig(unit).tool.global_transform
 		game.step_attack(unit)
 		game.move_projectiles(Rules.STEP)
 		opponent.hit = maxf(0,opponent.hit-Rules.STEP)
 		field.sync_figures()
+		if tick+1==duration:
+			var final_tool: Transform2D = rig(unit).tool.global_transform
+			expect(prior_tool.origin.distance_to(final_tool.origin)<2.0 and absf(wrapf(prior_tool.get_rotation()-final_tool.get_rotation(),-PI,PI))<0.16,"The last attack tick joins the idle weapon pose")
 		if tick%2==0:
 			picture("%s-before-%02d" % [id,frame_count+1],true)
 			picture("%s-after-%02d" % [id,frame_count+1])

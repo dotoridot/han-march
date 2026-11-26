@@ -14,6 +14,8 @@ const INK = Color("1e1714")
 const TEXT_COLOR = Color("f4e6c8")
 const GOLD = Color("e3ad5e")
 const RIVER = Color("527974")
+const DANGER = Color("f2a271")
+const DANGER_FILL = Color("d0653c99")
 var game: Campaign
 var display = "map"
 var transfer = 0.0
@@ -23,6 +25,7 @@ var text_zoom = 1.0
 var backdrop: Texture2D
 var cache_key = [-1,0]
 var pointer = Vector2.ZERO
+var inspected_uid := -1
 var render_build_usec = 0
 var chip_font: FontVariation
 var drafted_map: Texture2D
@@ -292,24 +295,44 @@ func battlefield() -> void:
 		if not e.attack.is_empty() and not e.attack.contact:
 			var dir: Vector2 = e.attack.dir
 			var reach = game.max_range(e)
-			var progress = float(e.attack.step)/e.attack.impact
-			var warning = Color("ffca81") if progress>=0.72 else Color("de754b")
-			for mark in 3:
-				var offset = Vector2((mark-1)*5,8)
-				ink.draw_line(e.p+offset,e.p+offset+Vector2(0,4),warning if progress>=mark/3.0 else Color("563021"),2)
+			var remaining: int = e.attack.impact-e.attack.step
+			var progress = 1.0-float(remaining)/e.attack.impact
+			var imminent = remaining<=4
+			var filled = floorf(progress*4)/4 if reduce_motion else progress
 			if e.weapon=="bow":
 				var edge: Vector2 = dir.orthogonal()*13
 				var cutoff: float = game.line_obstacle(e.p,e.p+dir*reach)
 				if cutoff<INF: reach *= sqrt(cutoff)
-				ink.draw_colored_polygon(PackedVector2Array([e.p-edge,e.p+edge,e.p+dir*reach+edge,e.p+dir*reach-edge]),Color("a84a3077"))
-				ink.draw_line(e.p,e.p+dir*reach,warning,2)
+				var end: Vector2 = e.p+dir*reach
+				var lane = PackedVector2Array([e.p-edge,e.p+edge,end+edge,end-edge])
+				if reach>0:
+					ink.draw_colored_polygon(lane,Color("a84a303a"))
+					if filled>0:
+						var front: Vector2 = e.p.lerp(end,filled)
+						ink.draw_colored_polygon(PackedVector2Array([e.p-edge,e.p+edge,front+edge,front-edge]),DANGER_FILL)
+				lane.append(e.p-edge)
+				ink.draw_polyline(lane,DANGER,2.0)
 			else:
 				var points = PackedVector2Array([e.p])
+				var fill_points = PackedVector2Array([e.p])
 				var angle: float = game.sweep_angle(e)
-				for step in 17:
-					points.append(e.p+dir.rotated(lerpf(-angle,angle,step/16.0))*reach)
-				ink.draw_colored_polygon(points,Color("b6533788"))
-				ink.draw_arc(e.p,reach,dir.angle()-angle,dir.angle()+angle,16,warning,2)
+				for i in 17:
+					var ray = dir.rotated(lerpf(-angle,angle,i/16.0))*reach
+					points.append(e.p+ray)
+					fill_points.append(e.p+ray*filled)
+				ink.draw_colored_polygon(points,Color("a84a303a"))
+				if filled>0 and reach>0:
+					ink.draw_colored_polygon(fill_points,DANGER_FILL)
+				points.append(e.p)
+				ink.draw_polyline(points,DANGER,2.0)
+			if imminent and reach>=12.0:
+				var side = dir.orthogonal()*5.0
+				for offset in [3.0,10.0]:
+					var tip: Vector2 = e.p+dir*(reach-offset)
+					var tail = tip-dir*4.0
+					var chevron = PackedVector2Array([tail+side,tip,tail-side])
+					ink.draw_polyline(chevron,INK,4.0)
+					ink.draw_polyline(chevron,TEXT_COLOR,2.0)
 	for u in game.team+game.alive(game.foes):
 		ink.draw_circle(u.p,6.5,Color("1f1a166a"))
 		if u.id=="liu": marker_floor(u.p,"ece0a2")
@@ -424,6 +447,29 @@ func label_chip(raw: String, p: Vector2, tint: Color, occupied: Array[Rect2], fo
 		occupied.append(moved)
 		return
 
+func draw_ally_bars(unit: Dictionary, occupied: Array[Rect2]) -> void:
+	var dimensions = Vector2(roundf(38*text_zoom),roundf(17*text_zoom))
+	var anchor = to_screen(unit.p-Vector2(0,46))-Vector2(dimensions.x*0.5,dimensions.y)
+	var values = [unit.hp/unit.max_hp,unit.mp/maxf(1.0,unit.max_mp),unit.fatigue/100.0]
+	var colors = [Color("a5cb93"),Color("92c2df"),Color("e3ad5e")]
+	for offset in [Vector2.ZERO,Vector2(-12,-7),Vector2(12,-7),Vector2(0,-15)]:
+		var area = Rect2(anchor+offset,dimensions)
+		area.position = area.position.clamp(box.position+Vector2(2,2),box.end-dimensions-Vector2(2,2))
+		if occupied.any(func(item): return item.intersects(area.grow(1))):
+			continue
+		ink.draw_rect(area,INK)
+		if unit.uid==inspected_uid:
+			ink.draw_rect(area,TEXT_COLOR,false,1.0)
+		var height = floorf((dimensions.y-6)/3)
+		for i in values.size():
+			var rail = Rect2(area.position+Vector2(3,2+i*(height+1)),Vector2(dimensions.x-6,height))
+			ink.draw_rect(rail,Color("564a42"))
+			rail.size.x *= clampf(values[i],0.0,1.0)
+			if rail.size.x>0:
+				ink.draw_rect(rail,colors[i])
+		occupied.append(area)
+		return
+
 func draw_chips() -> void:
 	var used: Array[Rect2] = []
 	var font_size = roundi(13*text_zoom)
@@ -443,9 +489,8 @@ func draw_chips() -> void:
 		if warnings>=4: break
 		if not enemy.attack.is_empty() and not enemy.attack.contact and enemy.p.distance_to(game.team[0].p)<180:
 			warnings += 1
-			label_chip("예고",to_screen(enemy.p-Vector2(0,45)),Color("f5af77"),used,font_size)
-	for u in game.alive(game.team):
-		label_chip("%s  HP %d  MP %d  피로 %d" % [Campaign.HEROES[u.id][0],ceili(u.hp),floori(u.mp),roundi(u.fatigue)],to_screen(u.p-Vector2(0,45)),TEXT_COLOR,used,font_size)
+			var imminent: bool = enemy.attack.impact-enemy.attack.step<=4
+			label_chip("직전" if imminent else "예고",to_screen(enemy.p-Vector2(0,45)),DANGER,used,font_size)
 	for target in game.targets:
 		var line = target[2]
 		if game.hold_target==target[0]:
@@ -465,6 +510,13 @@ func draw_chips() -> void:
 		label_chip("수레 HP %d" % roundi(game.wagon_hp),to_screen(game.wagon)+Vector2(0,25),GOLD,used,font_size)
 	if game.chapter==3 and game.gates<2:
 		label_chip("방책 2곳 개방 시 지휘관 공격 가능",to_screen(Vector2(325,54)),TEXT_COLOR,used,font_size)
+	for ally in game.alive(game.team):
+		if ally.uid==inspected_uid:
+			draw_ally_bars(ally,used)
+			break
+	for ally in game.alive(game.team):
+		if ally.uid!=inspected_uid:
+			draw_ally_bars(ally,used)
 
 func _draw() -> void:
 	var reading = Time.get_ticks_usec()
