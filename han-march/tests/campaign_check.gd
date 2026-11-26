@@ -147,6 +147,59 @@ func departure_checks() -> void:
 	app.queue_free()
 	await process_frame
 
+func battle_resume_checks() -> void:
+	var test_profile = OS.get_environment("HAN_MARCH_PROFILE")
+	if test_profile.is_empty():
+		return
+	var profile = test_profile.path_join("battle-resume")
+	var folder_error = DirAccess.make_dir_recursive_absolute(profile)
+	expect(folder_error==OK,"Battle resume creates its own test profile")
+	if folder_error!=OK:
+		return
+	OS.set_environment("HAN_MARCH_PROFILE",profile)
+	var scene = load("res://main.tscn")
+	var app = scene.instantiate()
+	root.add_child(app)
+	app.set_process(false)
+	app.set_physics_process(false)
+	app.motion_reduced = false
+	app.run_seed.text = "12345"
+	app.start_historical()
+	app.choose_route(0)
+	var departure: Dictionary = app.checkpoint_data.duplicate(true)
+	app.complete_travel()
+	var game = app.game
+	var cache = game.targets.filter(func(target): return target[0]=="cache")
+	expect(cache.size()==1 and game.board_mask.mud,"Legacy departure seed creates the mud supply cart")
+	if cache.size()==1:
+		game.team[0].p = cache[0][1]
+		game.interact(game.team[0],0.7,true)
+		expect(game.supply==departure.supply+2,"Cart interaction awards two supplies in battle")
+		app.toggle_motion()
+		expect(app.checkpoint_data==departure,"Saving options keeps the departure checkpoint unchanged")
+	game.clear_battle()
+	app.queue_free()
+	await process_frame
+
+	app = scene.instantiate()
+	root.add_child(app)
+	app.set_process(false)
+	app.set_physics_process(false)
+	app.continue_run()
+	game = app.game
+	expect(app.motion_reduced and game.phase=="travel" and game.supply==departure.supply,"Loading an existing versioned checkpoint restores departure supply and saved option")
+	app.complete_travel()
+	cache = game.targets.filter(func(target): return target[0]=="cache")
+	expect(cache.size()==1,"Resumed battle recreates the unclaimed cart")
+	if cache.size()==1:
+		game.team[0].p = cache[0][1]
+		game.interact(game.team[0],0.7,true)
+		expect(game.supply==departure.supply+2,"Resumed battle cannot accumulate the cart award twice")
+	game.clear_battle()
+	app.queue_free()
+	await process_frame
+	OS.set_environment("HAN_MARCH_PROFILE",test_profile)
+
 func checkpoint_checks() -> void:
 	var g = make()
 	g.new_run(9090,"fiction")
@@ -261,6 +314,7 @@ func diversity_checks() -> void:
 func verify() -> void:
 	timing_checks()
 	await departure_checks()
+	await battle_resume_checks()
 	checkpoint_checks()
 	tactics_checks()
 	diversity_checks()

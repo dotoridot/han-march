@@ -542,7 +542,8 @@ func show_save_error() -> void:
 
 func save() -> bool:
 	var cfg = ConfigFile.new()
-	var data = checkpoint_data if game.phase=="title" and not checkpoint_data.is_empty() else game.checkpoint()
+	# Mid-battle saves update options and the chronicle, not the departure snapshot.
+	var data = checkpoint_data if game.phase in ["title","battle"] and not checkpoint_data.is_empty() else game.checkpoint()
 	cfg.set_value("chronicle","discovered",game.record)
 	cfg.set_value("options","reduced_motion",motion_reduced)
 	cfg.set_value("options","text_scale",text_zoom)
