@@ -492,6 +492,8 @@ func map_view(reveal_draft: bool) -> void:
 		var b = action(choices,"",choose_route.bind(i))
 		b.size_flags_horizontal = SIZE_EXPAND_FILL
 		b.disabled = locked
+		if locked:
+			b.focus_mode = FOCUS_NONE
 		map_button_skin(b)
 		var content = MarginContainer.new()
 		content.mouse_filter = MOUSE_FILTER_IGNORE

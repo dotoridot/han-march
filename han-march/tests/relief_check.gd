@@ -115,6 +115,7 @@ func map_layout() -> void:
 		click_map(map.flags[0].get_global_rect().get_center())
 		click_map(app.map_choices[0].get_global_rect().get_center())
 		expect(app.game.phase=="map" and app.game.field_rng.state==state,"Locked flag and card cannot depart")
+		expect(not app.map_choices[0].has_focus(),"Clicking a locked card cannot move keyboard focus onto it")
 		click_map(app.map_choices[1].get_global_rect().get_center())
 		expect(app.game.phase=="travel" and app.game.selected_route==1,"The available route card can depart")
 		app.game.new_run(12345,"history")
