@@ -1,0 +1,5 @@
+.DS_Store
+.godot/
+__pycache__/
+*.ttf
+/han-march/addons/limboai/
