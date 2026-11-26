@@ -61,6 +61,35 @@ func click_map(at: Vector2) -> void:
 		click.pressed = pressed
 		root.push_input(click)
 
+func map_keyboard(window_size: Vector2i) -> void:
+	for supply in [3,0]:
+		app.game.new_run(12345,"history")
+		app.game.chapter = 1
+		app.game.supply = supply
+		app.march_at = Relief.TRAILS[0][0]
+		app.show_phase()
+		await process_frame
+		await process_frame
+		var help: Label = app.map_prompt
+		expect(help.text.contains("WASD") and help.text.contains("방향키") and help.text.contains("E 출정") and
+			help.text.contains("Tab") and help.text.contains("Enter") and
+			help.get_visible_line_count()==help.get_line_count() and root.get_visible_rect().encloses(help.get_global_rect()),
+			"The full starting help names movement, flag and card keys at %s, supply %d" % [window_size,supply])
+		var first_available = 1 if supply==0 else 0
+		expect(app.map_choices[first_available].has_focus(),"The first usable route has initial keyboard focus")
+		var state: int = app.game.field_rng.state
+		tap(KEY_TAB)
+		if supply==0:
+			expect(not app.map_choices[0].has_focus() and not app.map_choices[1].has_focus(),
+				"Tab leaves the available card and skips the locked route")
+			tap(KEY_TAB)
+		expect(app.map_choices[1].has_focus() and app.game.phase=="map" and app.game.field_rng.state==state,
+			"Tab reaches the eastern levee without departing or consuming RNG")
+		var preview: Dictionary = app.game.preview_route(1)
+		tap(KEY_ENTER)
+		expect(app.game.phase=="travel" and app.game.selected_route==1 and app.game.supply==supply+2 and
+			app.game.battle_seed==preview.seed,"Enter departs on the focused card with its forecast seed and supply")
+
 func map_layout() -> void:
 	app.game.new_run(12345,"history")
 	app.show_phase()
@@ -75,9 +104,10 @@ func map_layout() -> void:
 		root.size = window_size
 		app.text_zoom = 1.18 if window_size.x==760 else 1.0
 		app.build_theme()
+		await map_keyboard(window_size)
 		for chapter in 4:
 			for route in 2:
-				app.game.new_run(12345,"history")
+				app.game.new_run(12345,"fiction" if chapter==3 else "history")
 				app.game.chapter = chapter
 				app.march_at = Relief.TRAILS[0][0]
 				app.show_phase()
@@ -87,6 +117,15 @@ func map_layout() -> void:
 				app.show_phase()
 				await process_frame
 				await process_frame
+				var intro: Label
+				for label in app.screen_body.find_children("*","Label",true,false):
+					if label.text.begins_with("기록  ") or label.text.begins_with("가상  "):
+						intro = label
+						break
+				var expected_intro: String = ["삼진을 공략했다.","팽성의 한군을 격파했다.","군량과 요충지를 두고 맞섰다.","적장은 창작 인물이다."][chapter]
+				expect(is_instance_valid(intro) and intro.is_visible_in_tree() and intro.text.contains(expected_intro) and
+					intro.get_visible_line_count()==intro.get_line_count() and root.get_visible_rect().encloses(intro.get_global_rect()),
+					"The complete campaign introduction remains visible with a draft result at %s, chapter %d" % [window_size,chapter])
 				var flag: Button = map.flags[route]
 				var card: Button = app.map_choices[route]
 				var label: Label = map.nameplates[route]
@@ -98,6 +137,10 @@ func map_layout() -> void:
 				expect(label.text==app.game.entry().routes[route][0] and card.accessibility_name==label.text,
 					"Flag and card use the same route name as the campaign")
 				expect(not flag_rect.intersects(card.get_global_rect()),"Cards keep each flag's hit target clear")
+				if is_instance_valid(intro):
+					expect(not flag_rect.intersects(intro.get_global_rect()) and
+						not card.get_global_rect().intersects(intro.get_global_rect()),
+						"The visible introduction does not cover flag or card input")
 				var preview: Dictionary = app.game.preview_route(route)
 				click_map(flag_rect.get_center())
 				expect(app.game.phase=="travel" and app.game.selected_route==route and app.game.battle_seed==preview.seed,

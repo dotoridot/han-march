@@ -280,18 +280,15 @@ func defer_focus(node: Control) -> void:
 	if is_instance_valid(node) and node.is_visible_in_tree() and (not node is BaseButton or not node.disabled):
 		node.grab_focus()
 
-func note_dialogue(parent: Control, key: String, tooltip := false) -> void:
-	var label = words(parent,"",16,SUBTLE,true) if not tooltip else null
+func note_dialogue(parent: Control, key: String, size_px := 16) -> void:
+	var label = words(parent,"",size_px,SUBTLE,true)
 	var line_data = await manager.get_next_dialogue_line(text_data,key,[{"fantasy":game.mode=="fiction","has_xiang":"xiang" in game.hero_keys,
 		"first_rescue":game.rescue_order.front() if not game.rescue_order.is_empty() else "",
 		"approach":game.selected_route}])
 	if line_data==null or not is_instance_valid(parent) or parent.is_queued_for_deletion():
 		return
-	var line = "%s  %s" % [line_data.character,line_data.text]
-	if tooltip:
-		parent.tooltip_text = line
-	elif is_instance_valid(label):
-		label.text = line
+	if is_instance_valid(label):
+		label.text = "%s  %s" % [line_data.character,line_data.text]
 
 func show_phase(reveal_draft := false) -> void:
 	var old_phase = announced_phase
@@ -449,7 +446,7 @@ func map_view(reveal_draft: bool) -> void:
 	var notes = PanelContainer.new()
 	notes.add_theme_stylebox_override("panel",skin(MAP_INK,6))
 	var has_draft = not confirmed_draft.is_empty()
-	notes.custom_minimum_size.x = 290 if has_draft else 380
+	notes.custom_minimum_size.x = 348 if has_draft else 380
 	notes.size_flags_vertical = SIZE_SHRINK_BEGIN
 	upper.add_child(notes)
 	var story = column(notes,1)
@@ -458,7 +455,7 @@ func map_view(reveal_draft: bool) -> void:
 	for hero in game.hero_keys:
 		names.append(Campaign.HEROES[hero][0])
 	words(story,"유방의 군세 / %s" % "  ".join(names),14,PAPER,true)
-	note_dialogue(notes if has_draft else story,data.id,has_draft)
+	note_dialogue(story,data.id,14 if has_draft else 16)
 	upper.add_spacer(false)
 	if not game.ration_hero.is_empty():
 		words(story,"군량 순환 / %s 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10" %
@@ -466,7 +463,7 @@ func map_view(reveal_draft: bool) -> void:
 	if has_draft:
 		var panel = PanelContainer.new()
 		panel.add_theme_stylebox_override("panel",skin(MAP_INK,7))
-		panel.custom_minimum_size.x = 400
+		panel.custom_minimum_size.x = 350
 		panel.size_flags_vertical = SIZE_SHRINK_BEGIN
 		upper.add_child(panel)
 		var result = row(panel,6)
@@ -562,7 +559,7 @@ func refresh_map_prompt(index: int) -> void:
 	if not is_instance_valid(map_prompt) or map_prompt_index==index: return
 	map_prompt_index = index
 	if index<0:
-		map_prompt.text = "WASD 또는 방향키로 이동 / 깃발 근처에서 E 출정 / 깃발이나 카드 선택"
+		map_prompt.text = "WASD 또는 방향키로 이동 / 깃발 근처 E 출정 / 카드 이동 Tab, 확정 Enter / 마우스로 선택"
 	else:
 		var path: Array = game.entry().routes[index]
 		var suffix = "보급 부족으로 출발할 수 없습니다." if game.supply+path[3]<0 else "E로 출발"
