@@ -51,6 +51,7 @@ var scene_theme: Theme
 var large_font: FontVariation
 var interactive_input = false
 var click_attack = false
+var dismiss_click_held = false
 var mouse_here = Vector2(-1,-1)
 
 func _ready() -> void:
@@ -411,6 +412,8 @@ func scale_text() -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouse:
 		mouse_here = event.position
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		dismiss_click_held = false
 	if event is InputEventMouseButton and event.pressed:
 		interactive_input = true
 		var active_focus = get_viewport().gui_get_focus_owner()
@@ -418,6 +421,8 @@ func _input(event: InputEvent) -> void:
 			active_focus.get_meta("focus_line").hide()
 		if event.button_index == MOUSE_BUTTON_LEFT and view in ["pause","journal"] and not sheet.get_global_rect().has_point(event.position):
 			click_attack = false
+			# Handling the event does not clear Input's pressed state.
+			dismiss_click_held = true
 			get_viewport().set_input_as_handled()
 			back_from_overlay()
 			return
@@ -501,7 +506,10 @@ func advance_field(dt: float) -> void:
 	var inside = surface.has_point(mouse_here)
 	var aim = (mouse_here - surface.position)*Run.SIZE/surface.size if inside else player.p + player.face*42
 	field.pointer = aim if inside else Vector2(-1,-1)
-	var attack = click_attack or (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and inside)
+	var mouse_pressed = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	if not mouse_pressed:
+		dismiss_click_held = false
+	var attack = not dismiss_click_held and (click_attack or (mouse_pressed and inside))
 	if Input.is_physical_key_pressed(KEY_SPACE):
 		var closest = run.nearest(player.p,run.foes,run.reach(player)+25)
 		if not closest.is_empty():
