@@ -19,9 +19,9 @@ func snap(name: String) -> void:
 	if directory:
 		root.get_texture().get_image().save_png(directory.path_join(name+".png"))
 
-func camp_labels() -> String:
+func camp_labels(container: Control = null) -> String:
 	var lines: Array[String] = []
-	for label in ui.screen_body.find_children("*","Label",true,false):
+	for label in (ui.screen_body if container==null else container).find_children("*","Label",true,false):
 		lines.append(label.text)
 	return "\n".join(lines)
 
@@ -123,14 +123,14 @@ func camp_edges() -> void:
 	await snap("narrow-first-camp")
 	check_camp_layout()
 	var table = camp_labels()
-	if "다음 전장 / 팽성" not in table or "추격병" not in table or "경유지 선택 전" not in table:
-		push_error("Camp forecast omits the next battlefield, its pursuit or the unselected routes")
+	if "다음 전장 / 팽성 / 추격병" not in table or "Page Up" in table or "한왕의 길" in table:
+		push_error("Camp should show a concise battlefield forecast")
 		status = 1
 	if ui.game.checkpoint()!=before:
 		push_error("Camp forecast changed checkpoint or RNG state")
 		status = 1
-	if "조참 8/18 | 합류: 기본 대열 → 약낭 돌파" not in table or "항우 0/18 | 역사 행군에서는 등용할 수 없습니다." not in table:
-		push_error("Odds rows omit the tactic transition or the zero-weight reason")
+	if "조참 8/18" not in table or "조참 합류: 약낭 돌파" not in table or " 0/18" in table:
+		push_error("Odds should show eligible faces and a concise change in tactics")
 		status = 1
 	var roll: Button = ui.primary_button
 	if not root.get_visible_rect().encloses(roll.get_global_rect()) or not roll.has_focus() or roll.accessibility_name!=roll.text:
@@ -139,13 +139,16 @@ func camp_edges() -> void:
 	var scroll: ScrollContainer = ui.screen_body.find_child("CampScroll",true,false)
 	if scroll!=null:
 		var previous = scroll.scroll_vertical
+		if previous!=0 or not scroll.get_global_rect().encloses(ui.dice_view.get_global_rect()):
+			push_error("The entire die must be visible with the initial keyboard focus")
+			status = 1
 		var page = InputEventKey.new()
-		page.physical_keycode = KEY_PAGEUP
+		page.physical_keycode = KEY_PAGEDOWN
 		page.pressed = true
 		root.push_input(page)
 		await process_frame
-		if scroll.scroll_vertical>=previous:
-			push_error("Page Up must scroll the narrow camp without a pointer")
+		if scroll.scroll_vertical<=previous:
+			push_error("Page Down must scroll the narrow camp without a pointer")
 			status = 1
 		scroll.scroll_vertical = previous
 	var key = InputEventKey.new()
@@ -193,7 +196,7 @@ func camp_edges() -> void:
 	ui.show_phase()
 	await snap("narrow-duplicate")
 	var options = camp_labels()
-	if "왕의 신호 (유방의 기세 베기 피해 +25%)" not in options or "보급 +2 전환: 방패 엄호" not in options or "방패와 장창 (조참의 공격 피해 +20%)" not in options:
+	if "왕의 신호 (유방의 기세 베기 피해 +25%)" not in options or "보급 전환 시 보급" not in options:
 		push_error("Duplicate options omit the upgrade and conversion previews")
 		status = 1
 	var promote: Button = ui.primary_button
@@ -210,7 +213,7 @@ func camp_edges() -> void:
 	root.push_input(click)
 	await snap("narrow-promote-preview")
 	var confirm: Button = ui.primary_button
-	if ui.draft_resolution!="promote" or ui.game.promotion_level("han")!=0 or not confirm.has_focus() or not root.get_visible_rect().encloses(confirm.get_global_rect()) or "출발 후 진법: 방패 엄호 (한신이 지원 사격 사용) + 왕의 신호" not in camp_labels():
+	if ui.draft_resolution!="promote" or ui.game.promotion_level("han")!=0 or not confirm.has_focus() or not root.get_visible_rect().encloses(confirm.get_global_rect()) or "진법 변화: 왕의 신호 (유방의 기세 베기 피해 +25%)" not in camp_labels():
 		push_error("Confirmation is not visible or the preview already applied its reward")
 		status = 1
 	key = key.duplicate()
@@ -231,7 +234,11 @@ func camp_edges() -> void:
 		ui.game.restore(route_camp)
 		ui.show_phase()
 		var can_depart: bool = supply==1
-		var forecast: String = camp_labels()
+		map_badge("진법 규칙과 적용 중인 군령").pressed.emit()
+		var rules = ui.modal.find_child("CampRules",true,false)
+		if rules!=null: rules.pressed.emit()
+		var forecast: String = camp_labels(ui.modal_content)
+		ui.close_modal()
 		ui.choose_perk(ui.game.offerings[0].id)
 		var choice: Button = ui.primary_button
 		ui.choose_route(0)
@@ -245,7 +252,11 @@ func camp_edges() -> void:
 	ui.game.restore(conversion)
 	ui.show_phase()
 	ui.choose_draft_resolution("supply")
-	var available: bool = "수변 나루 (초기 적이 적음)" in camp_labels()
+	map_badge("진법 규칙과 적용 중인 군령").pressed.emit()
+	var rules = ui.modal.find_child("CampRules",true,false)
+	if rules!=null: rules.pressed.emit()
+	var available: bool = "수변 나루 (초기 적이 적음)" in camp_labels(ui.modal_content)
+	ui.close_modal()
 	ui.choose_perk(ui.game.offerings[0].id)
 	ui.choose_route(0)
 	if not available or ui.game.phase!="battle" or ui.game.supply!=1:
@@ -256,9 +267,13 @@ func camp_edges() -> void:
 	convoy.chapter = 1
 	ui.game.restore(convoy)
 	ui.show_phase()
-	if "오창 보급길 (매복병이 많음)" not in camp_labels() or "성고 산등성이 (매복병이 적음)" not in camp_labels():
+	map_badge("진법 규칙과 적용 중인 군령").pressed.emit()
+	rules = ui.modal.find_child("CampRules",true,false)
+	if rules!=null: rules.pressed.emit()
+	if "오창 보급길 (매복병이 많음)" not in camp_labels(ui.modal_content) or "성고 산등성이 (매복병이 적음)" not in camp_labels(ui.modal_content):
 		push_error("The convoy forecast must describe the route-dependent ambush")
 		status = 1
+	ui.close_modal()
 
 func order_edges() -> void:
 	ui.complete_travel()
@@ -297,10 +312,10 @@ func order_edges() -> void:
 			status = 1
 		var before: Dictionary = ui.game.checkpoint()
 		var rolled: int = example[0]-1
-		var promote = "승급 시 보급 %d → %d / 전환 +0 / 황금 눈 +1 (상한 9)" % [rolled,rolled+1]
+		var promote = "승급 시 보급 %d → %d / 황금 눈 +1" % [rolled,rolled+1]
 		var conversion: int = mini(2,9-rolled)
-		var supply = "보급 전환 시 보급 %d → %d / 전환 +%d / 황금 눈 +%d (상한 9)" % [
-			rolled,mini(9,rolled+conversion+1),conversion,int(rolled+conversion<9)]
+		var supply = "보급 전환 시 보급 %d → %d" % [rolled,mini(9,rolled+conversion+1)]
+		if rolled+conversion<9: supply += " / 황금 눈 +1"
 		if not "눈 18 / 18" in camp_labels():
 			push_error("Camp labels omit the final face")
 			status = 1
@@ -316,6 +331,8 @@ func order_edges() -> void:
 		await snap("orders-promotion-%d" % example[0])
 		check_camp_layout()
 		check_reward_view(promote,"강화")
+		if example[0]==3:
+			await check_camp_orders(true)
 		var pending_visible = false
 		for label in ui.screen_body.find_children("*","Label",true,false):
 			if label.text.begins_with("조참 승급 예정") and label.is_visible_in_tree() and root.get_visible_rect().encloses(label.get_global_rect()):
@@ -478,28 +495,83 @@ func check_draft_audio(camp: Dictionary) -> void:
 		print("Draft audio ",example[0],"/",example[1],"/",example[2],": ",played," / first slot ",slot," / total ",ui.audio_sequence-first)
 	AudioServer.set_bus_mute(0,true)
 
-func check_camp_orders() -> void:
+func check_camp_orders(resolved := false) -> void:
 	var details = map_badge("진법 규칙과 적용 중인 군령")
 	if details==null:
 		push_error("Camp is missing its order details control")
 		status = 1
 		return
 	var primary: Button = ui.primary_button
+	var click_position = Vector2(3,root.size.y-3)
+	if resolved and root.size.x==1280:
+		click_position = Vector2(primary.get_global_rect().get_center().x,primary.get_global_rect().end.y-4)
+	var before: Dictionary = ui.game.checkpoint()
 	details.grab_focus()
 	confirm_with_enter()
 	await snap("orders-detail")
 	var scroller: ScrollContainer = ui.modal_content.get_parent()
-	var effects: Array[String] = []
-	for label in ui.modal_content.find_children("*","Label",true,false):
-		if label.is_visible_in_tree() and scroller.get_global_rect().encloses(label.get_global_rect()) and label.get_visible_line_count()==label.get_line_count():
-			effects.append(label.text)
-	if not effects.any(func(copy): return "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in copy) or scroller.get_v_scroll_bar().visible:
-		push_error("The active order must show its full text inside the details viewport")
+	var effects: String = camp_labels(ui.modal_content)
+	var close: Control = root.gui_get_focus_owner()
+	if not "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in effects or not "야영지 1회 / 최대 9" in effects or close==null or close.accessibility_name!="닫기":
+		push_error("The details must show the active effects and named close control")
 		status = 1
-	confirm_with_enter()
+	if root.size.x==760 and scroller.get_v_scroll_bar().visible:
+		push_error("All three order entries and their limits should fit the 118% detail viewport")
+		status = 1
+	if scroller.get_v_scroll_bar().visible:
+		var page = InputEventKey.new()
+		page.physical_keycode = KEY_PAGEDOWN
+		page.pressed = true
+		root.push_input(page)
+		await process_frame
+		if scroller.scroll_vertical<=0 or not root.get_visible_rect().encloses(close.get_global_rect()):
+			push_error("Details must scroll with the keyboard while Close stays visible")
+			status = 1
+	var cards = ui.screen_body.find_child("CampCards",true,false)
+	for card in cards.get_children():
+		if not card.accessibility_name.ends_with(" / 군령"): continue
+		var rule_name: String = card.accessibility_name.get_slice(" / ",0)
+		var expected = "선택 가능" if resolved else "등용 보상 선택 필요"
+		if card.disabled==resolved or not (rule_name+" / "+expected) in effects:
+			push_error("The offered order must describe the same availability as its card")
+			status = 1
+	var tactics = ui.modal.find_child("CampTactics",true,false)
+	if tactics==null:
+		push_error("The detail view needs a keyboard-accessible tactics control")
+		status = 1
+	else:
+		tactics.grab_focus()
+		confirm_with_enter()
+		await process_frame
+		var rules: String = camp_labels(ui.modal_content)
+		for text in ["방패 엄호 / 주 진법 / 한신과 번쾌","약낭 돌파 / 주 진법 / 소하와 조참 또는 항우","유방의 기세 베기 피해 +25%","조참의 공격 피해 +20%"]:
+			if not text in rules:
+				push_error("Missing tactics detail: "+text)
+				status = 1
+		if resolved and not "현재 +20% / 예정 +30%" in rules:
+			push_error("Tactics details must show the actual projected bonus")
+			status = 1
+	if resolved and root.size.x==1280:
+		var modal_card: Control = scroller.get_parent().get_parent()
+		if primary.disabled or not primary.get_global_rect().has_point(click_position) or modal_card.get_global_rect().has_point(click_position):
+			push_error("The outside-click test must overlap the active perk button")
+			status = 1
+	var click = InputEventMouseButton.new()
+	click.position = click_position
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	root.push_input(click)
+	click = click.duplicate()
+	click.pressed = false
+	root.push_input(click)
 	await process_frame
-	if ui.modal_active or not details.has_focus():
-		push_error("Closing the order details must restore focus to its trigger")
+	if ui.modal_active:
+		push_error("An outside click must close the camp details")
+		status = 1
+		ui.close_modal()
+	await process_frame
+	if not details.has_focus() or ui.game.checkpoint()!=before:
+		push_error("Closing the order details must restore focus without changing phase, supply or RNG")
 		status = 1
 	primary.grab_focus()
 	await process_frame
@@ -536,7 +608,7 @@ func ration_heal(camp: Dictionary) -> void:
 	ui.show_phase()
 	ui.choose_draft_resolution("promote")
 	await snap("orders-heal-preview")
-	if not "첫 공격 또는 응급 처치 시 피로 최대 -10" in camp_labels():
+	if not "군량 순환 적용 예정" in camp_labels():
 		status = 1
 	confirm_with_enter()
 	await snap("orders-heal-map")
