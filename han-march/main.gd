@@ -633,8 +633,8 @@ func map_view(reveal_draft: bool) -> void:
 		b.accessibility_description = "%s / %s" % [summary,path[1]]
 		if path[0] in last_stand_routes:
 			b.accessibility_description += " / "+last_stand_effect
-		content.minimum_size_changed.connect(func(): b.custom_minimum_size = content.get_combined_minimum_size().max(Vector2(0,120)))
-		b.custom_minimum_size = content.get_combined_minimum_size().max(Vector2(0,120))
+		content.minimum_size_changed.connect(func(): b.custom_minimum_size = content.get_combined_minimum_size())
+		b.custom_minimum_size = content.get_combined_minimum_size()
 		b.mouse_entered.connect(set_map_hover.bind(i))
 		b.mouse_exited.connect(set_map_hover.bind(-1))
 		b.focus_entered.connect(set_map_focus.bind(i))
@@ -767,7 +767,8 @@ func camp_view(reveal_draft: bool) -> void:
 	var briefing = PanelContainer.new()
 	briefing.add_theme_stylebox_override("panel",skin(MAP_INK,8))
 	screen_body.add_child(briefing)
-	words(briefing,"다음 전장 / %s / %s" % [next.name,threat],17,PAPER,true)
+	var forecast = row(briefing,6)
+	words(forecast,"다음 전장 / %s / %s" % [next.name,threat],17,PAPER,true)
 	var routes: Array = next.routes
 	var departure_supply: int = game.supply
 	var projected_draft: Dictionary = game.project_candidate(game.draft_candidate,draft_resolution)
@@ -828,7 +829,7 @@ func camp_view(reveal_draft: bool) -> void:
 	var die_column = sections[1]
 	var tactics = sections[2]
 	var current: String = game.tactic_effects(game.tactics)
-	words(tactics,"현재 진법: "+current,15,GOLD,true)
+	words(tactics,"현재 진법: "+game.tactic_name(),15,GOLD,true)
 	var orders = Campaign.PLAN.perks.filter(func(perk):
 		return perk.tag=="군령" and perk.id in game.names_upgrades["liu"])
 	var choices = GridContainer.new()
@@ -906,9 +907,9 @@ func camp_view(reveal_draft: bool) -> void:
 			var id: String = Campaign.DRAFT[i]
 			var detail := ""
 			if id not in game.hero_keys:
-				detail = draft_tactic_line(id,"","합류",current,true)
+				detail = draft_tactic_line(id,"","합류",true)
 			elif game.promotion_level(id)<Campaign.PROMOTION_CAP:
-				detail = draft_tactic_line(id,"promote","승급",current,true)
+				detail = draft_tactic_line(id,"promote","승급",true)
 			var odds = "%s %d/%d" % [Campaign.HEROES[id][0],weights[i],faces]
 			var badge = PanelContainer.new()
 			badge.add_theme_stylebox_override("panel",skin(Color("273743"),6))
@@ -933,7 +934,7 @@ func camp_view(reveal_draft: bool) -> void:
 				pending = "보급 +%d 전환 예정" % gain
 			if draft_resolution.is_empty():
 				if not capped:
-					var advance = draft_tactic_line(id,"promote","승급",current)
+					var advance = draft_tactic_line(id,"promote","승급")
 					if not advance.is_empty(): words(tactics,advance,15,GOLD,true)
 				for note in reward_notes.values(): words(die_column,note,14,GOLD,true)
 			var rewards = flow(die_column,4)
@@ -947,12 +948,11 @@ func camp_view(reveal_draft: bool) -> void:
 			promote.accessibility_description = reward_notes.get("promote","")
 			stores.accessibility_description = reward_notes.get("supply","")
 			if draft_resolution.is_empty(): primary_button = stores if promote.disabled else promote
-			words(tactics,"승급 단계마다 %s. 승급 상한 %d단계 / 보급 상한 %d, 전환 시 최대 +%d" % [
-				Campaign.PROMOTION[id][0],Campaign.PROMOTION_CAP,Campaign.SUPPLY_CAP,Campaign.DUPLICATE_SUPPLY],15,SUBTLE,true)
+
 		else:
 			pending = "%s 합류 예정" % Campaign.HEROES[id][0]
 			if reward_notes.has(""): words(die_column,reward_notes[""],14,GOLD,true)
-			var arrival = draft_tactic_line(id,"","합류",current)
+			var arrival = draft_tactic_line(id,"","합류")
 			if not arrival.is_empty(): words(tactics,arrival,15,GOLD,true)
 		var again = action(die_column,"후보 버리고 다시 굴리기 / 보급 2",perform_redraw)
 		again.disabled = game.rerolled or game.supply<2
@@ -962,8 +962,9 @@ func camp_view(reveal_draft: bool) -> void:
 	pending_result.text = pending
 	pending_result.visible = not pending.is_empty()
 	if draft_resolution=="promote": pending_result.add_theme_color_override("font_color",PROMOTION_BLUE)
+	var needs_resolution = game.draft_candidate in game.hero_keys and draft_resolution.is_empty()
 	var more = action(tactics,"진법 규칙과 적용 중인 군령",func():
-		var detail_size = Vector2(minf(710,size.x-76),minf(480,size.y-126))
+		var detail_size = Vector2(minf(710,size.x-76),minf(437,size.y-169))
 		activate_modal(detail_size)
 		var scroller: ScrollContainer = modal_content.get_parent()
 		var stack = scroller.get_parent()
@@ -975,33 +976,88 @@ func camp_view(reveal_draft: bool) -> void:
 		map_button_skin(back)
 		stack.get_parent().add_theme_stylebox_override("panel",skin(Color("20252cf7"),14))
 		scroller.scroll_vertical = 0
+		var tabs = row(stack,6)
+		stack.move_child(tabs,1)
 		var offered_orders = game.offerings.filter(func(perk): return perk.tag=="군령" and perk not in orders)
-		for order in orders+offered_orders:
-			var item = column(modal_content,2)
-			words(item,"⚑  "+order.name+" / "+("적용 중" if order in orders else "선택 가능"),16,Color("ffb09c"))
-			var limits: String = {
-				"ambush_counter":"회피마다 1회 / 1초 안",
-				"golden_eye":"야영지 1회 / 최대 %d" % Campaign.SUPPLY_CAP,
-				"ration_cycle":"전투마다 장수 1명 / 1회",
-				"last_stand":"출정 후 보급 0 / 이번 전투",
-			}.get(order.id,"")
-			var effect: String = order.text
-			if order.id in ["golden_eye","ration_cycle"]:
-				effect = effect.get_slice(". ",0)+"."
-			words(item,effect,14,PAPER,true)
-			words(item,limits,13,MAP_SECONDARY,true)
-		words(modal_content,"군령은 종류마다 한 번 획득할 수 있습니다.",13,MAP_SECONDARY,true)
-		words(modal_content,"◇  진법 편성",17,GOLD)
-		words(modal_content,"주 진법은 방패 엄호 > 약낭 돌파, 보조 진법은 왕의 신호 > 방패와 장창 순으로 적용됩니다. 주 진법과 보조 진법은 각각 하나씩 적용됩니다.",14,PAPER,true)
-		words(modal_content,"유방과 한신은 한신 1단계부터 왕의 신호가 열립니다. 번쾌와 조참은 합류 즉시 방패와 장창을 쓰며, 조참의 승급과 한신의 2단계 이후 승급마다 해당 피해 증가량이 10%p 오릅니다.",14,PAPER,true)
-		words(modal_content,"◇  등용과 보급",17,GOLD)
-		words(modal_content,"우대 보급 1 / 다시 굴리기 보급 2, 야영지 1회 / 중복 전환 최대 +%d / 승급 최대 %d단계 / 보급 최대 %d" % [Campaign.DUPLICATE_SUPPLY,Campaign.PROMOTION_CAP,Campaign.SUPPLY_CAP],14,PAPER,true)
-		words(modal_content,"경유지 선택 전 / %s" % ", ".join(route_notes),14,MAP_SECONDARY,true)
+		var show_details = func(tab_index: int):
+			for tab in tabs.get_children():
+				var selected: bool = tab.get_index()==tab_index
+				tab.text = tab.accessibility_name+(" ✓" if selected else "")
+				tab.accessibility_description = "선택됨" if selected else ""
+				map_button_skin(tab)
+				if selected: tab.add_theme_stylebox_override("normal",skin(Color("5a3631"),9))
+			empty(modal_content)
+			scroller.set_deferred("scroll_vertical",0)
+			if tab_index==0:
+				for order in orders+offered_orders:
+					var panel = PanelContainer.new()
+					panel.add_theme_stylebox_override("panel",skin(Color("303640"),8))
+					modal_content.add_child(panel)
+					var item = column(panel,2)
+					var state = "선택 가능"
+					if order in orders:
+						state = "적용 중"
+					elif needs_resolution:
+						state = "등용 보상 선택 필요"
+					words(item,"⚑  "+order.name+" / "+state,16,Color("ffb09c"))
+					var limits: String = {
+						"ambush_counter":"회피마다 1회 / 1초 안",
+						"golden_eye":"야영지 1회 / 최대 %d" % Campaign.SUPPLY_CAP,
+						"ration_cycle":"전투마다 장수 1명 / 1회",
+						"last_stand":"출정 후 보급 0 / 이번 전투",
+					}.get(order.id,"")
+					var effect: String = order.text
+					if order.id in ["golden_eye","ration_cycle"]:
+						effect = effect.get_slice(". ",0)+"."
+					words(item,effect,14,PAPER,true)
+					words(item,limits,13,MAP_SECONDARY,true)
+				if orders.is_empty() and offered_orders.is_empty():
+					words(modal_content,"획득하거나 선택할 수 있는 군령이 없습니다.",15,MAP_SECONDARY,true)
+				else:
+					words(modal_content,"군령은 종류마다 한 번 획득할 수 있습니다.",13,MAP_SECONDARY,true)
+			elif tab_index==1:
+				words(modal_content,"주 진법과 보조 진법은 각각 위에서부터 하나씩 적용됩니다.",14,MAP_SECONDARY,true)
+				for rule in [
+					["shield_cover",["han","fan"],"주 진법 / 한신과 번쾌",{}],
+					["medicine_advance",["xiao","cao"],"주 진법 / 소하와 조참 또는 항우",{}],
+					["royal_signal",["liu","han"],"보조 진법 / 유방과 한신 1단계 이상",{"han":1}],
+					["shield_spear",["fan","cao"],"보조 진법 / 번쾌와 조참",{}],
+				]:
+					var rule_id: String = rule[0]
+					var tactic: Array = Campaign.TACTICS[rule_id]
+					var panel = PanelContainer.new()
+					panel.add_theme_stylebox_override("panel",skin(Color("303640"),6))
+					modal_content.add_child(panel)
+					var item = column(panel,1)
+					var label: String = tactic[0]+" / "+rule[2]
+					var effect: String = tactic[1]
+					var is_current: bool = rule_id in [game.tactics.lead,game.tactics.support]
+					var upcoming: bool = not projected_draft.is_empty() and rule_id in [projected_draft.tactics.lead,projected_draft.tactics.support]
+					if is_current: label += " / 적용 중"
+					if upcoming and not is_current: label += " / 적용 예정"
+					if rule[2].begins_with("보조"):
+						var base: Dictionary = game.resolve_tactics(rule[1],rule[3])
+						effect = "기본 "+(effect % base.bonus)
+						if is_current: effect += " / 현재 +%d%%" % game.tactics.bonus
+						if upcoming and (not is_current or projected_draft.tactics.bonus!=game.tactics.bonus):
+							effect += " / 예정 +%d%%" % projected_draft.tactics.bonus
+					words(item,label,15,GOLD,true)
+					words(item,effect,14,PAPER,true)
+				words(modal_content,"조참과 한신은 후속 승급마다 해당 피해 +10%p.",13,MAP_SECONDARY,true)
+			else:
+				if Campaign.PROMOTION.has(game.draft_candidate):
+					words(modal_content,"승급 단계마다 "+Campaign.PROMOTION[game.draft_candidate][0],14,MAP_SECONDARY,true)
+				words(modal_content,"◇  등용과 보급",17,GOLD)
+				words(modal_content,"우대 보급 1 / 다시 굴리기 보급 2, 야영지 1회 / 중복 전환 최대 +%d / 승급 최대 %d단계 / 보급 최대 %d" % [Campaign.DUPLICATE_SUPPLY,Campaign.PROMOTION_CAP,Campaign.SUPPLY_CAP],14,PAPER,true)
+				words(modal_content,"경유지 선택 전 / %s" % ", ".join(route_notes),14,MAP_SECONDARY,true)
+		action(tabs,"군령",show_details.bind(0))
+		action(tabs,"진법",show_details.bind(1)).name = "CampTactics"
+		action(tabs,"등용과 보급",show_details.bind(2)).name = "CampRules"
+		show_details.call(1 if orders.is_empty() and offered_orders.is_empty() else 0)
 		defer_focus.call_deferred(back))
 	map_button_skin(more)
 	if game.chapter==1:
 		note_dialogue(roster,"rescued",14)
-	var needs_resolution = game.draft_candidate in game.hero_keys and draft_resolution.is_empty()
 	var card_strip = PanelContainer.new()
 	card_strip.add_theme_stylebox_override("panel",skin(Color("212830e8"),7))
 	sheet.add_child(card_strip)
@@ -1009,12 +1065,11 @@ func camp_view(reveal_draft: bool) -> void:
 	if game.draft_done:
 		var instruction = "승급 또는 보급 전환을 먼저 고르세요." if needs_resolution else "선택하면 등용 보상을 확정하고 출발합니다."
 		words(card_heading,"강화와 군령 / "+instruction,16,PAPER,true)
-		if draft_resolution=="promote" and "ration_cycle" in game.names_upgrades["liu"]:
-			words(tactics,"군량 순환 / 승급 확정 시 다음 전투에서 최대 및 시작 MP +4, 첫 공격 또는 응급 처치 시 피로 최대 -10",14,GOLD,true)
-		if not game.draft_candidate.is_empty() and (game.draft_candidate not in game.hero_keys or not draft_resolution.is_empty()):
-			var projected: Dictionary = game.project_candidate(game.draft_candidate,draft_resolution)
-			var after: String = game.tactic_effects(projected.tactics)
-			if after!=current: words(tactics,"출발 후 진법: "+after,15,GOLD,true)
+		if draft_resolution=="promote":
+			var delta = draft_tactic_line(game.draft_candidate,"promote","진법 변화")
+			if not delta.is_empty(): words(tactics,delta,15,GOLD,true)
+			if "ration_cycle" in game.names_upgrades["liu"]:
+				words(tactics,"군량 순환 적용 예정",14,MAP_SECONDARY,true)
 	else:
 		words(card_heading,"강화와 군령 / 등용을 건너뛰려면 바로 고르세요.",16,PAPER,true)
 	var confirmation = words(card_heading,pending,16,PROMOTION_BLUE if draft_resolution=="promote" else GOLD,true)
@@ -1056,14 +1111,25 @@ func camp_view(reveal_draft: bool) -> void:
 		content.minimum_size_changed.connect(func(): b.custom_minimum_size = content.get_combined_minimum_size().max(Vector2(0,120)))
 		b.custom_minimum_size = content.get_combined_minimum_size().max(Vector2(0,120))
 		if primary_button==null and not needs_resolution: primary_button = b
+	var roster_jump = action(forecast,"장수",func(): choices.get_child(0).grab_focus())
+	var cards_jump = action(forecast,"강화",func():
+		var first: Button = cards.get_child(0)
+		if first.disabled:
+			scroll.scroll_vertical = roundi(card_strip.position.y)
+		else:
+			first.grab_focus())
+	for jump in [roster_jump,cards_jump]:
+		map_button_skin(jump)
 	var reflow = func():
 		var count = 3 if scroll.size.x>=1000.0 else 1
+		roster_jump.visible = count==1
+		cards_jump.visible = count==1
 		columns.columns = count
 		if count==3:
 			var available = scroll.size.y+scenery.custom_minimum_size.y
 			scenery.custom_minimum_size.y = clampf(available-sheet.get_combined_minimum_size().y-2,0,128)
 		else:
-			scenery.custom_minimum_size.y = 36
+			scenery.custom_minimum_size.y = 18
 		var die_panel = die_column.get_parent()
 		var roster_panel = roster.get_parent()
 		if count==3:
@@ -1079,17 +1145,21 @@ func camp_view(reveal_draft: bool) -> void:
 	sheet.minimum_size_changed.connect(reflow,CONNECT_DEFERRED)
 	reflow.call()
 
-func draft_tactic_line(id: String, resolution: String, label: String, current: String, names_only := false) -> String:
+func draft_tactic_line(id: String, resolution: String, label: String, names_only := false) -> String:
 	var projected: Dictionary = game.project_candidate(id,resolution)
-	var after: String = game.tactic_effects(projected.tactics)
-	if current==after:
-		return ""
-	if names_only:
-		var changed: Array[String] = []
-		for tactic in [projected.tactics.lead,projected.tactics.support]:
-			if not tactic.is_empty(): changed.append(Campaign.TACTICS[tactic][0])
-		after = " + ".join(changed) if not changed.is_empty() else "기본 대열"
-	return "%s: %s" % [label,after]
+	var tactics: Dictionary = projected.tactics
+	var changes: Array[String] = []
+	if tactics.lead!=game.tactics.lead:
+		var lead: Array = Campaign.TACTICS.get(tactics.lead,["기본 대열",""])
+		changes.append(lead[0] if names_only or lead[1].is_empty() else "%s (%s)" % [lead[0],lead[1]])
+	if tactics.support!=game.tactics.support:
+		var support: Array = Campaign.TACTICS.get(tactics.support,["보조 진법 해제",""])
+		changes.append(support[0] if names_only or support[1].is_empty() else "%s (%s)" % [support[0],support[1] % tactics.bonus])
+	elif tactics.bonus!=game.tactics.bonus:
+		var effect: Array = Campaign.TACTICS[tactics.support]
+		var bonus = "+%d%% → +%d%%" % [game.tactics.bonus,tactics.bonus]
+		changes.append(effect[0]+" "+bonus if names_only else (effect[1] % game.tactics.bonus).get_slice(" +",0)+" "+bonus)
+	return "" if changes.is_empty() else "%s: %s" % [label," / ".join(changes)]
 
 func change_odds(id: String) -> void:
 	var plan = game.draft_plan
