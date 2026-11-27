@@ -999,7 +999,8 @@ func camp_view(reveal_draft: bool) -> void:
 						state = "적용 중"
 					elif needs_resolution:
 						state = "등용 보상 선택 필요"
-					words(item,"⚑  "+order.name+" / "+state,16,Color("ffb09c"))
+					var order_heading = row(item,8)
+					words(order_heading,"⚑  "+order.name+" / "+state,16,Color("ffb09c"),true)
 					var limits: String = {
 						"ambush_counter":"회피마다 1회 / 1초 안",
 						"golden_eye":"야영지 1회 / 최대 %d" % Campaign.SUPPLY_CAP,
@@ -1009,8 +1010,9 @@ func camp_view(reveal_draft: bool) -> void:
 					var effect: String = order.text
 					if order.id in ["golden_eye","ration_cycle"]:
 						effect = effect.get_slice(". ",0)+"."
+					var limit = words(order_heading,limits,13,MAP_SECONDARY)
+					limit.size_flags_vertical = SIZE_SHRINK_CENTER
 					words(item,effect,14,PAPER,true)
-					words(item,limits,13,MAP_SECONDARY,true)
 				if orders.is_empty() and offered_orders.is_empty():
 					words(modal_content,"획득하거나 선택할 수 있는 군령이 없습니다.",15,MAP_SECONDARY,true)
 				else:

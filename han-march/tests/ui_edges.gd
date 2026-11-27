@@ -515,6 +515,9 @@ func check_camp_orders(resolved := false) -> void:
 	if not "첫 공격 또는 응급 처치의 피로 증가량 최대 10 감소" in effects or not "야영지 1회 / 최대 9" in effects or close==null or close.accessibility_name!="닫기":
 		push_error("The details must show the active effects and named close control")
 		status = 1
+	if root.size.x==760 and scroller.get_v_scroll_bar().visible:
+		push_error("All three order entries and their limits should fit the 118% detail viewport")
+		status = 1
 	if scroller.get_v_scroll_bar().visible:
 		var page = InputEventKey.new()
 		page.physical_keycode = KEY_PAGEDOWN
